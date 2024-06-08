@@ -1,118 +1,34 @@
-##Author github user @Tanneguydv, 2023
+#!/usr/bin/env python
 
-import sys
-from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeSphere
-from OCC.Core.gp import gp_Pnt
-from OCC.Core.AIS import AIS_Manipulator
-from OCC.Extend.LayerManager import Layer
+##Copyright 2019 Thomas Paviot (tpaviot@gmail.com)
+##
+##This file is part of pythonOCC.
+##
+##pythonOCC is free software: you can redistribute it and/or modify
+##it under the terms of the GNU Lesser General Public License as published by
+##the Free Software Foundation, either version 3 of the License, or
+##(at your option) any later version.
+##
+##pythonOCC is distributed in the hope that it will be useful,
+##but WITHOUT ANY WARRANTY; without even the implied warranty of
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+##GNU Lesser General Public License for more details.
+##  
+##You should have received a copy of the GNU Lesser General Public License
+##along with pythonOCC.  If not, see <http://www.gnu.org/licenses/>.
 
-from OCC.Display.backend import load_backend
+from OCC.Core.Graphic3d import Graphic3d_NOM_ALUMINIUM
+from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+from OCC.Display.SimpleGui import init_display
 
-load_backend("pyqt5")
-import OCC.Display.qtDisplay as qtDisplay
+display, start_display, add_menu, add_function_to_menu = init_display()
 
-from PyQt5.QtWidgets import (
-    QApplication,
-    QWidget,
-    QPushButton,
-    QHBoxLayout,
-    QGroupBox,
-    QDialog,
-    QVBoxLayout,
-)
+#
+# Displays a cylinder with a material
+#
+radius = 30
+s = BRepPrimAPI_MakeCylinder(radius, 200).Shape()
+display.DisplayShape(s, material=Graphic3d_NOM_ALUMINIUM)
 
-class App(QDialog):
-    def __init__(self):
-        super().__init__()
-        self.title = "PyQt5 / pythonOCC / Manipulator"
-        self.left = 300
-        self.top = 300
-        self.width = 800
-        self.height = 600
-        self.initUI()
-
-    def initUI(self):
-        self.setWindowTitle(self.title)
-        self.setGeometry(self.left, self.top, self.width, self.height)
-        self.createLayout()
-
-        windowLayout = QVBoxLayout()
-        windowLayout.addWidget(self.horizontalGroupBox)
-        self.setLayout(windowLayout)
-        self.show()
-        self.createGeometry()
-
-    def createGeometry(self):
-        self.canvas.InitDriver()
-        self.display = self.canvas._display
-
-        box = BRepPrimAPI_MakeBox(15.0, 15.0, 15.0).Shape()
-        self.layer = Layer(self.display, box)
-        sphere = BRepPrimAPI_MakeSphere(gp_Pnt(25, 25, 25), 5).Shape()
-        self.layer.add_shape(sphere)
-        self.show_layer()
-
-    def createLayout(self):
-        self.horizontalGroupBox = QGroupBox("Display PythonOCC")
-        layout_h = QHBoxLayout()
-        layout_v = QVBoxLayout()
-
-        self.activate_manip_button = QPushButton("Activate Manipulator", self)
-        self.activate_manip_button.setCheckable(True)
-        self.activate_manip_button.clicked.connect(self.activate_manipulator)
-        layout_v.addWidget(self.activate_manip_button)
-
-        self.show_layer_button = QPushButton("Show Layer", self)
-        self.show_layer_button.setCheckable(True)
-        self.show_layer_button.setChecked(True)
-        self.show_layer_button.clicked.connect(self.show_layer)
-        layout_v.addWidget(self.show_layer_button)
-        layout_h.addLayout(layout_v)
-
-        self.canvas = qtDisplay.qtViewer3dWithManipulator(self)
-        layout_h.addWidget(self.canvas)
-
-        layout_h.setStretch(0, 0)
-        layout_h.setStretch(1, 1)
-        self.horizontalGroupBox.setLayout(layout_h)
-
-    def show_layer(self):
-        if self.show_layer_button.isChecked():
-            self.layer.show()
-            self.display.FitAll()
-        else:
-            self.layer.hide()
-            self.display.FitAll()
-
-    def activate_manipulator(self):
-        if self.activate_manip_button.isChecked():
-            selected = self.display.GetSelectedShape()
-            if selected is not None:
-                # retrieve the AIS_Shape from the selected TopoDS_Shape
-                (
-                    self.ais_element_manip,
-                    self.index_element_manip,
-                ) = self.layer.get_aisshape_from_topodsshape(selected)
-                self.shape_element_manip = selected
-                # Create and attach a Manipulator to AIS_Shape
-                self.manip = AIS_Manipulator()
-                self.manip.Attach(self.ais_element_manip)
-                # Pass the Manipulator to the Qtviewer
-                self.canvas.set_manipulator(self.manip)
-                self.display.View.Redraw()
-            else:
-                self.activate_manip_button.setChecked(False)
-        else:
-            # Get the transformations done with the manipulator
-            trsf = self.canvas.get_trsf_from_manip()
-            # Apply the transformation to the TopoDS_Shape and replace it in the layer
-            self.layer.update_trsf_shape(
-                self.shape_element_manip, self.index_element_manip, trsf
-            )
-            self.manip.Detach()
-
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    ex = App()
-    app.exec()
+display.FitAll()
+start_display()
