@@ -40,13 +40,12 @@ def convert_shape(shape):
     # See https://www.opencascade.com/doc/occt-7.4.0/refman/html/class_b_rep_builder_a_p_i___nurbs_convert.html#details
 
     # Loop over faces
-    faceCount = 0
     for face in TopologyExplorer(converted_shape).faces():
         surface = BRepAdaptor_Surface(face, True)
         # check each of the is a BSpline surface
         # it should be, since we used the nurbs converter before
         if not surface.GetType() == GeomAbs_BSplineSurface:
-            raise AssertionError(f"Face {faceCount} was not converted to a GeomAbs_BSplineSurface")
+            raise AssertionError("Face was not converted to a GeomAbs_BSplineSurface")
         # get the nurbs
         occSpline = surface.BSpline()
         order = (occSpline.UDegree() + 1, occSpline.VDegree() + 1)
@@ -79,10 +78,8 @@ def convert_shape(shape):
                 coefs[2, i, j] = pole.Z()
 
         spline = Spline(2, 3, order, nCoef, knots, coefs)
-        spline.metadata["Name"] = f"Boundary {faceCount}"
         boundary = Boundary(spline, Hyperplane.create_hypercube(spline.domain()))
         solid.add_boundary(boundary)
-        faceCount += 1
     
     return solid
 
