@@ -1,6 +1,5 @@
 ##Author github user @Tanneguydv, 2023
 
-import os
 import sys
 from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeSphere
 from OCC.Core.gp import gp_Pnt
@@ -21,7 +20,6 @@ from PyQt5.QtWidgets import (
     QDialog,
     QVBoxLayout,
 )
-
 
 class App(QDialog):
     def __init__(self):
@@ -117,5 +115,4 @@ class App(QDialog):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     ex = App()
-    if os.getenv("APPVEYOR") is None:
-        sys.exit(app.exec_())
+    app.exec()
