@@ -19,9 +19,9 @@
 
 import numpy as np
 from bspy import Spline
-from OCC.Core.Graphic3d import Graphic3d_NOM_ALUMINIUM
 from OCC.Core.Geom import Geom_BSplineSurface
 from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+from OCC.Core.Quantity import Quantity_Color, Quantity_TOC_RGB
 from OCC.Display.SimpleGui import init_display
 from OCC.Core.gp import gp_Pnt
 from OCC.Core.TColgp import TColgp_Array2OfPnt
@@ -52,7 +52,8 @@ for i in range(len(knots)):
 
 occSpline = Geom_BSplineSurface(poles, uKnots, vKnots, uMultiplicity, vMultiplicity, spline.order[0] - 1, spline.order[1] - 1)
 occSplineFace = BRepBuilderAPI_MakeFace(occSpline, 1.0e-6).Face()
-display.DisplayShape(occSplineFace, material=Graphic3d_NOM_ALUMINIUM)
+color = spline.metadata["fillColor"]
+display.DisplayColoredShape(occSplineFace, Quantity_Color(float(color[0]), float(color[1]), float(color[2]), Quantity_TOC_RGB))
 
 display.FitAll()
 start_display()
