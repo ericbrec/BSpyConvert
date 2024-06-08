@@ -61,23 +61,20 @@ def convert_shape(shape):
             knots[1][i] = vKnots.Value(i + 1)
         # weights, a 2d array
         weights = occSpline.Weights()
-        # weights can be None
-        if False and weights is not None:
-            print("Weights:", end="")
-            for i in range(occSpline.NbUPoles()):
-                for j in range(occSpline.NbVPoles()):
-                    print(weights.Value(i + 1, j + 1), end=" ")
+        nDep = 3 if weights is None else 4
         # Coefficients (aka poles), as a 2d array
         poles = occSpline.Poles()
-        coefs = np.empty((3, nCoef[0], nCoef[1]), float)
+        coefs = np.empty((nDep, nCoef[0], nCoef[1]), float)
         for i in range(nCoef[0]):
             for j in range(nCoef[1]):
                 pole = poles.Value(i + 1, j + 1)
                 coefs[0, i, j] = pole.X()
                 coefs[1, i, j] = pole.Y()
                 coefs[2, i, j] = pole.Z()
+                if nDep > 3:
+                    coefs[3, i, j] = weights.Value(i + 1, j + 1)
 
-        spline = Spline(2, 3, order, nCoef, knots, coefs)
+        spline = Spline(2, nDep, order, nCoef, knots, coefs)
         boundary = Boundary(spline, Hyperplane.create_hypercube(spline.domain()))
         solid.add_boundary(boundary)
     
