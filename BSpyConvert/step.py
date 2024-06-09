@@ -4,7 +4,7 @@ from OCC.Core.IFSelect import IFSelect_RetDone
 from OCC.Core.Interface import Interface_HArray1OfHAsciiString
 from OCC.Core.APIHeaderSection import APIHeaderSection_MakeHeader
 from OCC.Core.TCollection import TCollection_HAsciiString
-from bspy import Solid
+from bspy import Solid, Spline
 from BSpyConvert.convert import convert_spline_to_face, convert_shape_to_solid
 
 def export_step(fileName, solid):
@@ -12,8 +12,10 @@ def export_step(fileName, solid):
         if solid.dimension != 3: raise ValueError("Solid must be 3D (dimension == 3)")
         if solid.containsInfinity: raise ValueError("Solid must be finite (containsInfinity == False)")
         splines = [boundary.manifold for boundary in solid.boundaries]
-    else:
+    elif isinstance(solid, Spline):
         splines = [solid]
+    else:
+        splines = solid
 
     # Initialize the STEP writer.
     step_writer = STEPControl_Writer()
