@@ -10,7 +10,7 @@ from OCC.Extend.TopologyUtils import TopologyExplorer
 from OCC.Core.GeomAbs import GeomAbs_BSplineSurface
 from bspy import Spline, Hyperplane, Boundary, Solid
 
-def convert_spline_to_face(spline):
+def convert_spline_to_surface(spline):
     if spline.nInd != 2: raise ValueError("Spline must be a surface (nInd == 2)")
     if spline.nDep != 3: raise ValueError("Spline must be a 3D surface (nDep == 3)")
     if spline.order[0] <= 1 or spline.order[1] <= 1: raise ValueError("Spline order must be greater than 1")
@@ -36,8 +36,17 @@ def convert_spline_to_face(spline):
         vMultiplicity.SetValue(i + 1, int(multiplicity[i]))
 
     occSpline = Geom_BSplineSurface(poles, uKnots, vKnots, uMultiplicity, vMultiplicity, spline.order[0] - 1, spline.order[1] - 1)
-    occSplineFace = BRepBuilderAPI_MakeFace(occSpline, 1.0e-6).Face()
-    return occSplineFace
+    return occSpline
+
+def convert_surface_to_face(surface, domain = None):
+    if domain is None:
+        return BRepBuilderAPI_MakeFace(surface, 1.0e-6).Face()
+    
+    return None
+
+def convert_solid_to_shape(solid):
+    if solid.dimension != 3: raise ValueError("Solid must be 3D (dimension == 3)")
+    if solid.containsInfinity: raise ValueError("Solid must be finite (containsInfinity == False)")
 
 def convert_shape_to_solid(shape):
     # Create empty solid.

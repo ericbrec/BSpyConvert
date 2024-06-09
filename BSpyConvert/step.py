@@ -4,30 +4,29 @@ from OCC.Core.IFSelect import IFSelect_RetDone
 from OCC.Core.Interface import Interface_HArray1OfHAsciiString
 from OCC.Core.APIHeaderSection import APIHeaderSection_MakeHeader
 from OCC.Core.TCollection import TCollection_HAsciiString
-from bspy import Solid, Spline
-from BSpyConvert.convert import convert_spline_to_face, convert_shape_to_solid
+from bspy import Solid, Boundary, Manifold, Spline, Hyperplane
+import BSpyConvert.convert as convert
 
-def export_step(fileName, solid):
-    if isinstance(solid, Solid):
-        if solid.dimension != 3: raise ValueError("Solid must be 3D (dimension == 3)")
-        if solid.containsInfinity: raise ValueError("Solid must be finite (containsInfinity == False)")
-        splines = [boundary.manifold for boundary in solid.boundaries]
-    elif isinstance(solid, Spline):
-        splines = [solid]
-    else:
-        splines = solid
-
+def export_step(fileName, object):
     # Initialize the STEP writer.
     step_writer = STEPControl_Writer()
     Interface_Static.SetCVal("write.step.schema", "AP203")
 
-    # Transfer spline faces.
-    faceCount = 1
-    for spline in splines:
-        name = spline.metadata.get("Name", f"Face {faceCount}")
-        Interface_Static.SetCVal("write.step.product.name", name)
-        step_writer.Transfer(convert_spline_to_face(spline), STEPControl_AsIs)
-        faceCount += 1
+    if isinstance(object, (Solid, Boundary, Manifold)):
+        objects = [object]
+    else:
+        objects = object
+
+    objectCount = 1
+    for object in objects:
+        if isinstance(object, Spline):
+            spline = object
+            name = spline.metadata.get("Name", f"Face {objectCount}")
+            Interface_Static.SetCVal("write.step.product.name", name)
+            surface = convert.convert_spline_to_surface(spline)
+            face = convert.convert_surface_to_face(surface)
+            step_writer.Transfer(face, STEPControl_AsIs)
+        objectCount += 1
 
     # Create STEP header.
     model = step_writer.Model()
@@ -77,6 +76,6 @@ def import_step(fileName):
     for i in range(step_reader.NbShapes()):
         shape = step_reader.Shape(i + 1)
         if not shape.IsNull():
-            solids.append(convert_shape_to_solid(shape))
+            solids.append(convert.convert_shape_to_solid(shape))
     
     return solids
