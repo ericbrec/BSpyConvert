@@ -189,7 +189,7 @@ def convert_surface_to_face(surface, transform = None, flipNormal = False, domai
         transformInverseTranspose = np.transpose(np.linalg.inv(transform))
         domain = domain.transform(transform, transformInverseTranspose)
     
-
+    wires = convert_domain_to_wires(domain)
 
     
     return None
@@ -210,86 +210,90 @@ def convert_shape_to_solid(shape):
     # See https://www.opencascade.com/doc/occt-7.4.0/refman/html/class_b_rep_builder_a_p_i___nurbs_convert.html#details
 
     # Convert each face to a Boundary with a Spline manifold.
-    for face in explorer.faces():
-        surface = BRepAdaptor_Surface(face, True)
-        if not surface.GetType() == GeomAbs_BSplineSurface:
-            raise AssertionError("Face was not converted to a Geom_BSplineSurface")
+    for shell in explorer.shells():
+        shellFlipped = shell.Orientation() != TopAbs_FORWARD
         
-        # Get the BSpline parameters.
-        occSpline = surface.BSpline()
-        order = (occSpline.UDegree() + 1, occSpline.VDegree() + 1)
-        nCoef = (occSpline.NbUPoles(), occSpline.NbVPoles())
-        knots = (np.empty(order[0] + nCoef[0], float), np.empty(order[1] + nCoef[1], float))
-        uKnots = occSpline.UKnotSequence()
-        for i in range(order[0] + nCoef[0]):
-            knots[0][i] = uKnots.Value(i + 1)
-        vKnots = occSpline.VKnotSequence()
-        for i in range(order[1] + nCoef[1]):
-            knots[1][i] = vKnots.Value(i + 1)
-        poles = occSpline.Poles()
-        weights = occSpline.Weights()
-        nDep = 3 if weights is None else 4
-        coefs = np.empty((nDep, nCoef[0], nCoef[1]), float)
-        for i in range(nCoef[0]):
-            for j in range(nCoef[1]):
-                pole = poles.Value(i + 1, j + 1)
-                coefs[0, i, j] = pole.X()
-                coefs[1, i, j] = pole.Y()
-                coefs[2, i, j] = pole.Z()
-                if nDep > 3:
-                    coefs[3, i, j] = weights.Value(i + 1, j + 1)
-
-        # Create the Spline manifold.
-        spline = Spline(2, nDep, order, nCoef, knots, coefs)
-        faceFlipped = face.Orientation() != TopAbs_FORWARD
-        if faceFlipped:
-            spline = spline.flip_normal()
-
-        # Create the spline domain boundaries.
-        domain = Solid(2, False)
-        for edge in explorer.edges_from_face(face):
-            curve = BRepAdaptor_Curve2d(edge, face)
-            if not curve.GetType() == GeomAbs_BSplineCurve:
-                raise AssertionError("Edge was not converted to a Geom_BSplineCurve")
+        for face in explorer.faces_from_solids(shell):
+            surface = BRepAdaptor_Surface(face, True)
+            if not surface.GetType() == GeomAbs_BSplineSurface:
+                raise AssertionError("Face was not converted to a Geom_BSplineSurface")
             
             # Get the BSpline parameters.
-            occSpline = curve.BSpline()
-            order = (occSpline.Degree() + 1,)
-            nCoef = (occSpline.NbPoles(),)
-            knots = (np.empty(order[0] + nCoef[0], float),)
-            uKnots = occSpline.KnotSequence()
+            occSpline = surface.BSpline()
+            order = (occSpline.UDegree() + 1, occSpline.VDegree() + 1)
+            nCoef = (occSpline.NbUPoles(), occSpline.NbVPoles())
+            knots = (np.empty(order[0] + nCoef[0], float), np.empty(order[1] + nCoef[1], float))
+            uKnots = occSpline.UKnotSequence()
             for i in range(order[0] + nCoef[0]):
                 knots[0][i] = uKnots.Value(i + 1)
+            vKnots = occSpline.VKnotSequence()
+            for i in range(order[1] + nCoef[1]):
+                knots[1][i] = vKnots.Value(i + 1)
             poles = occSpline.Poles()
             weights = occSpline.Weights()
-            nDep = 2 if weights is None else 3
-            coefs = np.empty((nDep, nCoef[0]), float)
+            nDep = 3 if weights is None else 4
+            coefs = np.empty((nDep, nCoef[0], nCoef[1]), float)
             for i in range(nCoef[0]):
-                pole = poles.Value(i + 1)
-                coefs[0, i] = pole.X()
-                coefs[1, i] = pole.Y()
-                if nDep > 3:
-                    coefs[2, i] = weights.Value(i + 1)
+                for j in range(nCoef[1]):
+                    pole = poles.Value(i + 1, j + 1)
+                    coefs[0, i, j] = pole.X()
+                    coefs[1, i, j] = pole.Y()
+                    coefs[2, i, j] = pole.Z()
+                    if nDep > 3:
+                        coefs[3, i, j] = weights.Value(i + 1, j + 1)
 
-            # Create the domain spline manifold.
-            domainSpline = Spline(1, nDep, order, nCoef, knots, coefs)
-            edgeFlipped = edge.Orientation() != TopAbs_FORWARD
-            edgeFlipped = not edgeFlipped if faceFlipped else edgeFlipped
-            if edgeFlipped:
-                domainSpline = domainSpline.flip_normal()
+            # Create the Spline manifold.
+            spline = Spline(2, nDep, order, nCoef, knots, coefs)
+            faceFlipped = face.Orientation() != TopAbs_FORWARD
+            faceFlipped = not faceFlipped if shellFlipped else faceFlipped
+            if faceFlipped:
+                spline = spline.flip_normal()
 
-            # Create the domain spline domain boundaries.
-            domainSplineDomain = Solid(1, False)
-            for vertex in explorer.vertices_from_edge(edge):
-                done, parameter = BRep_Tool.Parameter(vertex, edge)
-                if done:
-                    vertexFlipped = vertex.Orientation() != TopAbs_FORWARD
-                    vertexFlipped = not vertexFlipped if edgeFlipped else vertexFlipped
-                    normal = 1.0 if vertexFlipped else -1.0
-                    domainSplineDomain.add_boundary(Boundary(Hyperplane(normal, parameter, 0.0), Solid(0, True)))
-            domain.add_boundary(Boundary(domainSpline, domainSplineDomain))
+            # Create the spline domain boundaries.
+            domain = Solid(2, False)
+            for edge in explorer.edges_from_face(face):
+                curve = BRepAdaptor_Curve2d(edge, face)
+                if not curve.GetType() == GeomAbs_BSplineCurve:
+                    raise AssertionError("Edge was not converted to a Geom_BSplineCurve")
+                
+                # Get the BSpline parameters.
+                occSpline = curve.BSpline()
+                order = (occSpline.Degree() + 1,)
+                nCoef = (occSpline.NbPoles(),)
+                knots = (np.empty(order[0] + nCoef[0], float),)
+                uKnots = occSpline.KnotSequence()
+                for i in range(order[0] + nCoef[0]):
+                    knots[0][i] = uKnots.Value(i + 1)
+                poles = occSpline.Poles()
+                weights = occSpline.Weights()
+                nDep = 2 if weights is None else 3
+                coefs = np.empty((nDep, nCoef[0]), float)
+                for i in range(nCoef[0]):
+                    pole = poles.Value(i + 1)
+                    coefs[0, i] = pole.X()
+                    coefs[1, i] = pole.Y()
+                    if nDep > 3:
+                        coefs[2, i] = weights.Value(i + 1)
 
-        # Create the solid boundary
-        solid.add_boundary(Boundary(spline, domain))
+                # Create the domain spline manifold.
+                domainSpline = Spline(1, nDep, order, nCoef, knots, coefs)
+                edgeFlipped = edge.Orientation() != TopAbs_FORWARD
+                edgeFlipped = not edgeFlipped if faceFlipped else edgeFlipped
+                if edgeFlipped:
+                    domainSpline = domainSpline.flip_normal()
+
+                # Create the domain spline domain boundaries.
+                domainSplineDomain = Solid(1, False)
+                for vertex in explorer.vertices_from_edge(edge):
+                    done, parameter = BRep_Tool.Parameter(vertex, edge)
+                    if done:
+                        vertexFlipped = vertex.Orientation() != TopAbs_FORWARD
+                        vertexFlipped = not vertexFlipped if edgeFlipped else vertexFlipped
+                        normal = 1.0 if vertexFlipped else -1.0
+                        domainSplineDomain.add_boundary(Boundary(Hyperplane(normal, parameter, 0.0), Solid(0, True)))
+                domain.add_boundary(Boundary(domainSpline, domainSplineDomain))
+
+            # Create the solid boundary
+            solid.add_boundary(Boundary(spline, domain))
     
     return solid
