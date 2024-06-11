@@ -1,16 +1,157 @@
 import numpy as np
-from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_NurbsConvert
+from collections import namedtuple
+from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_NurbsConvert, BRepBuilderAPI_MakeEdge2d, BRepBuilderAPI_MakeWire, BRepBuilderAPI_MakeFace
 from OCC.Core.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_Curve2d
-from OCC.Core.TopAbs import TopAbs_FORWARD
+from OCC.Core.TopAbs import TopAbs_FORWARD, TopAbs_REVERSED
 from OCC.Core.BRep import BRep_Tool
-from OCC.Core.Geom import Geom_BSplineSurface
-from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_MakeFace
-from OCC.Core.gp import gp_Pnt
-from OCC.Core.TColgp import TColgp_Array2OfPnt
+from OCC.Core.Geom import Geom_BSplineSurface, Geom_Plane
+from OCC.Core.Geom2d import Geom2d_BSplineCurve, Geom2d_Line
+from OCC.Core.gp import gp_Pnt, gp_Dir, gp_Ax3, gp_Pnt2d, gp_Dir2d
+from OCC.Core.TColgp import TColgp_Array2OfPnt, TColgp_Array1OfPnt2d
 from OCC.Core.TColStd import TColStd_Array1OfReal, TColStd_Array1OfInteger
 from OCC.Extend.TopologyUtils import TopologyExplorer
 from OCC.Core.GeomAbs import GeomAbs_BSplineSurface, GeomAbs_BSplineCurve
-from bspy import Spline, Hyperplane, Boundary, Solid
+from bspy import Manifold, Spline, Hyperplane, Boundary, Solid
+
+def convert_manifold_to_curve(manifold):
+    if manifold.range_dimension() != 2: raise ValueError("Manifold must be a 2D line or spline")
+
+    if isinstance(manifold, Hyperplane):
+        hyperplane = manifold
+        point = gp_Pnt2d(float(hyperplane._point[0]), float(hyperplane._point[1]))
+        vector = gp_Dir2d(float(hyperplane._tangentSpace[0, 0]), float(hyperplane._tangentSpace[1, 0]))
+        curve = Geom2d_Line(point, vector)
+    elif isinstance(manifold, Spline):
+        spline = manifold
+        if spline.nInd != 1: raise ValueError("Spline must be a curve (nInd == 1)")
+        if spline.nDep != 2: raise ValueError("Spline must be a 2D curve (nDep == 2)")
+        if spline.order[0] <= 1: raise ValueError("Spline order must be greater than 1")
+        if spline.order[0] > Geom2d_BSplineCurve.MaxDegree(): raise ValueError("Spline order must be <= Geom_BSplineSurface.MaxDegree")
+
+        poles = TColgp_Array1OfPnt2d(1, spline.nCoef[0])
+        for i in range(spline.nCoef[0]):
+            poles.SetValue(i + 1, gp_Pnt2d(float(spline.coefs[0, i]), float(spline.coefs[1, i])))
+
+        knots, multiplicity = np.unique(spline.knots[0], return_counts=True)
+        uKnots = TColStd_Array1OfReal(1, len(knots))
+        uMultiplicity = TColStd_Array1OfInteger(1, len(knots))
+        for i in range(len(knots)):
+            uKnots.SetValue(i + 1, float(knots[i]))
+            uMultiplicity.SetValue(i + 1, int(multiplicity[i]))
+
+        curve = Geom2d_BSplineCurve(poles, uKnots, uMultiplicity, spline.order[0] - 1)
+    else:
+        raise ValueError("Manifold must be a line or spline")
+    
+    return curve
+
+def convert_domain_to_wires(domain):
+    if domain.dimension != 2: raise ValueError("Domain must be 2D (dimension == 2)")
+    if domain.containsInfinity: raise ValueError("Domain must be finite (containsInfinity == False)")
+
+    # First, collect all manifold contour endpoints, accounting for slight numerical error.
+    class Endpoint:
+        def __init__(self, curve, t, clockwise, isStart, otherEnd=None):
+            self.curve = curve
+            self.t = t
+            self.xy = curve.manifold.evaluate((t,))
+            self.clockwise = clockwise
+            self.isStart = isStart
+            self.otherEnd = otherEnd
+            self.connection = None
+    endpoints = []
+    for curve in domain.boundaries:
+        curve.domain.boundaries.sort(key=lambda boundary: (boundary.manifold.evaluate(0.0), -boundary.manifold.normal(0.0)))
+        leftB = 0
+        rightB = 0
+        boundaryCount = len(curve.domain.boundaries)
+        while leftB < boundaryCount:
+            if curve.domain.boundaries[leftB].manifold.normal(0.0) < 0.0:
+                leftPoint = curve.domain.boundaries[leftB].manifold.evaluate(0.0)[0]
+                while rightB < boundaryCount:
+                    rightPoint = curve.domain.boundaries[rightB].manifold.evaluate(0.0)[0]
+                    if leftPoint - Manifold.minSeparation < rightPoint and curve.domain.boundaries[rightB].manifold.normal(0.0) > 0.0:
+                        t = curve.manifold.tangent_space(leftPoint)[:,0]
+                        n = curve.manifold.normal(leftPoint)
+                        clockwise = t[0] * n[1] - t[1] * n[0] > 0.0
+                        ep1 = Endpoint(curve, leftPoint, clockwise, rightPoint >= leftPoint)
+                        ep2 = Endpoint(curve, rightPoint, clockwise, rightPoint < leftPoint, ep1)
+                        ep1.otherEnd = ep2
+                        endpoints.append(ep1)
+                        endpoints.append(ep2)
+                        leftB = rightB
+                        rightB += 1
+                        break
+                    rightB += 1
+            leftB += 1
+
+    # Second, collect all valid pairings of endpoints (normal not flipped between segments).
+    Connection = namedtuple('Connection', ('distance', 'ep1', 'ep2'))
+    connections = []
+    for i, ep1 in enumerate(endpoints[:-1]):
+        for ep2 in endpoints[i+1:]:
+            if (ep1.clockwise == ep2.clockwise and ep1.isStart != ep2.isStart) or \
+                (ep1.clockwise != ep2.clockwise and ep1.isStart == ep2.isStart):
+                connections.append(Connection(np.linalg.norm(ep1.xy - ep2.xy), ep1, ep2))
+
+    # Third, only keep closest pairings (prune the rest).
+    connections.sort(key=lambda connection: -connection.distance)
+    while connections:
+        connection = connections.pop()
+        connection.ep1.connection = connection.ep2
+        connection.ep2.connection = connection.ep1
+        connections = [c for c in connections if c.ep1 is not connection.ep1 and c.ep1 is not connection.ep2 and \
+            c.ep2 is not connection.ep1 and c.ep2 is not connection.ep2]
+        
+    # Fourth, trace the contours from pairing to pairing.
+    wires = []
+    while endpoints:
+        start = endpoints[0]
+        if not start.isStart:
+            start = start.otherEnd
+        # Run backwards until you hit start again or hit an end.
+        if start.connection is not None:
+            originalStart = start
+            next = start.connection
+            start = None
+            while next is not None and start is not originalStart:
+                start = next.otherEnd
+                next = start.connection
+        # Run forwards building the wire.
+        next = start
+        builder = BRepBuilderAPI_MakeWire()
+        while next is not None:
+            endpoints.remove(next)
+            endpoints.remove(next.otherEnd)
+            curve = convert_manifold_to_curve(next.curve.manifold)
+            edge = BRepBuilderAPI_MakeEdge2d(curve, next.t, next.otherEnd.t).Edge()
+            builder.Add(edge)
+            next = next.otherEnd.connection
+            if next is start:
+                break
+        wire = builder.Wire()
+        # Reverse the direction of the wire if its movement is clockwise.
+        # The movement is clockwise if the start point moves clockwise (or its a counterclockwise ending point).
+        if start.clockwise == start.isStart:
+            wire.Reverse()
+        wires.append(wire)
+
+    return wires
+
+def convert_hyperplane_to_surface(hyperplane):
+    if hyperplane.range_dimension() != 3: raise ValueError("Hyperplane must be a 3D surface")
+
+    point = gp_Pnt(float(hyperplane._point[0]), float(hyperplane._point[1]), float(hyperplane._point[2]))
+    normal = gp_Dir(float(hyperplane._normal[0]), float(hyperplane._normal[1]), float(hyperplane._normal[2]))
+    xAxis = gp_Dir(float(hyperplane._tangentSpace[0, 0]), float(hyperplane._tangentSpace[1, 0]), float(hyperplane._tangentSpace[2, 0]))
+    axes = gp_Ax3(point, normal, xAxis)
+    occPlane = Geom_Plane(axes)
+    xDirection = axes.XDirection()
+    yDirection = axes.YDirection()
+    tangentSpace = np.array(((xDirection.X(), xDirection.Y(), xDirection.Z()),
+        (yDirection.X(), yDirection.Y(), yDirection.Z()))).T
+    transform = np.linalg.inv(tangentSpace.T @ tangentSpace) @ (tangentSpace.T @ hyperplane._tangentSpace)
+    return occPlane, transform
 
 def convert_spline_to_surface(spline):
     if spline.nInd != 2: raise ValueError("Spline must be a surface (nInd == 2)")
@@ -38,11 +179,18 @@ def convert_spline_to_surface(spline):
         vMultiplicity.SetValue(i + 1, int(multiplicity[i]))
 
     occSpline = Geom_BSplineSurface(poles, uKnots, vKnots, uMultiplicity, vMultiplicity, spline.order[0] - 1, spline.order[1] - 1)
-    return occSpline
+    return occSpline, spline.metadata.get("flipNormal", False)
 
-def convert_surface_to_face(surface, domain = None):
+def convert_surface_to_face(surface, transform = None, flipNormal = False, domain = None):
     if domain is None:
         return BRepBuilderAPI_MakeFace(surface, 1.0e-6).Face()
+    
+    if transform is not None:
+        transformInverseTranspose = np.transpose(np.linalg.inv(transform))
+        domain = domain.transform(transform, transformInverseTranspose)
+    
+
+
     
     return None
 
@@ -126,6 +274,7 @@ def convert_shape_to_solid(shape):
             # Create the domain spline manifold.
             domainSpline = Spline(1, nDep, order, nCoef, knots, coefs)
             edgeFlipped = edge.Orientation() != TopAbs_FORWARD
+            edgeFlipped = not edgeFlipped if faceFlipped else edgeFlipped
             if edgeFlipped:
                 domainSpline = domainSpline.flip_normal()
 
@@ -135,7 +284,8 @@ def convert_shape_to_solid(shape):
                 done, parameter = BRep_Tool.Parameter(vertex, edge)
                 if done:
                     vertexFlipped = vertex.Orientation() != TopAbs_FORWARD
-                    normal = 1.0 if edgeFlipped != vertexFlipped else -1.0
+                    vertexFlipped = not vertexFlipped if edgeFlipped else vertexFlipped
+                    normal = 1.0 if vertexFlipped else -1.0
                     domainSplineDomain.add_boundary(Boundary(Hyperplane(normal, parameter, 0.0), Solid(0, True)))
             domain.add_boundary(Boundary(domainSpline, domainSplineDomain))
 
