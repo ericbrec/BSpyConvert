@@ -19,12 +19,13 @@ def export_step(fileName, object):
 
     objectCount = 1
     for object in objects:
-        if isinstance(object, Spline):
-            spline = object
-            name = spline.metadata.get("Name", f"Face {objectCount}")
+        if isinstance(object, Manifold):
+            name = f"Face {objectCount}"
+            if hasattr(object, "metadata"):
+                name = object.metadata.get("Name", name)
             Interface_Static.SetCVal("write.step.product.name", name)
-            surface = convert.convert_spline_to_surface(spline)
-            face = convert.convert_surface_to_face(surface)
+            surface, flipNormal, transform = convert.convert_manifold_to_surface(object)
+            face = convert.convert_surface_to_face(surface, flipNormal)
             step_writer.Transfer(face, STEPControl_AsIs)
         objectCount += 1
 
