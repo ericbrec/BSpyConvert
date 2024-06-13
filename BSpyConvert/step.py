@@ -4,7 +4,7 @@ from OCC.Core.IFSelect import IFSelect_RetDone
 from OCC.Core.Interface import Interface_HArray1OfHAsciiString
 from OCC.Core.APIHeaderSection import APIHeaderSection_MakeHeader
 from OCC.Core.TCollection import TCollection_HAsciiString
-from bspy import Solid, Boundary, Manifold, Spline, Hyperplane
+from bspy import Solid, Boundary, Manifold
 import BSpyConvert.convert as convert
 
 def export_step(fileName, object):
@@ -27,6 +27,16 @@ def export_step(fileName, object):
             surface, flipNormal, transform = convert.convert_manifold_to_surface(object)
             face = convert.convert_surface_to_face(surface, flipNormal)
             step_writer.Transfer(face, STEPControl_AsIs)
+        elif isinstance(object, Boundary):
+            name = f"Face {objectCount}"
+            if hasattr(object.manifold, "metadata"):
+                name = object.manifold.metadata.get("Name", name)
+            Interface_Static.SetCVal("write.step.product.name", name)
+            face = convert.convert_boundary_to_face(object)
+            step_writer.Transfer(face, STEPControl_AsIs)
+        elif isinstance(object, Solid):
+            shape = convert.convert_solid_to_shape(object)
+            step_writer.Transfer(shape, STEPControl_AsIs)
         objectCount += 1
 
     # Create STEP header.

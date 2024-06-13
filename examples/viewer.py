@@ -6,7 +6,7 @@ if __name__ == "__main__":
     display, start_display, add_menu, add_function_to_menu = init_display()
 
     step_reader = STEPControl_Reader()
-    status = step_reader.ReadFile(r"c:\users\ericb\onedrive\desktop\Surface1.stp")
+    status = step_reader.ReadFile(r"c:\users\ericb\onedrive\desktop\Solid.stp")
     if status != IFSelect_RetDone:
         raise ValueError("Can't read file.")
     if not step_reader.TransferRoots():

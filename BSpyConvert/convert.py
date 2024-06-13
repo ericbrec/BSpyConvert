@@ -1,7 +1,8 @@
 import numpy as np
 from collections import namedtuple
-from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_NurbsConvert, BRepBuilderAPI_MakeEdge2d, BRepBuilderAPI_MakeWire, BRepBuilderAPI_MakeFace
-from OCC.Core.ShapeFix import ShapeFix_Face
+from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_NurbsConvert, BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace, BRepBuilderAPI_Sewing
+from OCC.Core.ShapeExtend import ShapeExtend_WireData
+from OCC.Core.ShapeFix import ShapeFix_Face, ShapeFix_Wire
 from OCC.Core.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_Curve2d
 from OCC.Core.TopAbs import TopAbs_FORWARD
 from OCC.Core.BRep import BRep_Tool
@@ -13,6 +14,55 @@ from OCC.Core.TColStd import TColStd_Array1OfReal, TColStd_Array1OfInteger
 from OCC.Extend.TopologyUtils import TopologyExplorer
 from OCC.Core.GeomAbs import GeomAbs_BSplineSurface, GeomAbs_BSplineCurve
 from bspy import Manifold, Spline, Hyperplane, Boundary, Solid
+
+def convert_manifold_to_surface(manifold):
+    if manifold.range_dimension() != 3: raise ValueError("Manifold must be a 3D surface")
+
+    if isinstance(manifold, Hyperplane):
+        hyperplane = manifold
+        point = gp_Pnt(float(hyperplane._point[0]), float(hyperplane._point[1]), float(hyperplane._point[2]))
+        normal = gp_Dir(float(hyperplane._normal[0]), float(hyperplane._normal[1]), float(hyperplane._normal[2]))
+        xAxis = gp_Dir(float(hyperplane._tangentSpace[0, 0]), float(hyperplane._tangentSpace[1, 0]), float(hyperplane._tangentSpace[2, 0]))
+        axes = gp_Ax3(point, normal, xAxis)
+        surface = Geom_Plane(axes)
+        flipNormal = False
+        xDirection = axes.XDirection()
+        yDirection = axes.YDirection()
+        tangentSpace = np.array(((xDirection.X(), xDirection.Y(), xDirection.Z()),
+            (yDirection.X(), yDirection.Y(), yDirection.Z()))).T
+        transform = np.linalg.inv(tangentSpace.T @ tangentSpace) @ (tangentSpace.T @ hyperplane._tangentSpace)
+    elif isinstance(manifold, Spline):
+        spline = manifold
+        if spline.nInd != 2: raise ValueError("Spline must be a surface (nInd == 2)")
+        if spline.order[0] <= 1 or spline.order[1] <= 1: raise ValueError("Spline order must be greater than 1")
+        if spline.order[0] > Geom_BSplineSurface.MaxDegree() or spline.order[1] > Geom_BSplineSurface.MaxDegree(): raise ValueError("Spline order must be <= Geom_BSplineSurface.MaxDegree")
+
+        poles = TColgp_Array2OfPnt(1, spline.nCoef[0], 1, spline.nCoef[1])
+        for i in range(spline.nCoef[0]):
+            for j in range(spline.nCoef[1]):
+                poles.SetValue(i + 1, j + 1, gp_Pnt(float(spline.coefs[0, i, j]), float(spline.coefs[1, i, j]), float(spline.coefs[2, i, j])))
+
+        knots, multiplicity = np.unique(spline.knots[0], return_counts=True)
+        uKnots = TColStd_Array1OfReal(1, len(knots))
+        uMultiplicity = TColStd_Array1OfInteger(1, len(knots))
+        for i in range(len(knots)):
+            uKnots.SetValue(i + 1, float(knots[i]))
+            uMultiplicity.SetValue(i + 1, int(multiplicity[i]))
+
+        knots, multiplicity = np.unique(spline.knots[1], return_counts=True)
+        vKnots = TColStd_Array1OfReal(1, len(knots))
+        vMultiplicity = TColStd_Array1OfInteger(1, len(knots))
+        for i in range(len(knots)):
+            vKnots.SetValue(i + 1, float(knots[i]))
+            vMultiplicity.SetValue(i + 1, int(multiplicity[i]))
+
+        surface = Geom_BSplineSurface(poles, uKnots, vKnots, uMultiplicity, vMultiplicity, spline.order[0] - 1, spline.order[1] - 1)
+        flipNormal = spline.metadata.get("flipNormal", False)
+        transform = None
+    else:
+        raise ValueError("Manifold must be a plane or spline")
+    
+    return surface, flipNormal, transform
 
 def convert_manifold_to_curve(manifold):
     if manifold.range_dimension() != 2: raise ValueError("Manifold must be a 2D line or spline")
@@ -46,7 +96,7 @@ def convert_manifold_to_curve(manifold):
     
     return curve
 
-def convert_domain_to_wires(domain):
+def convert_domain_to_wires(surface, domain):
     if domain.dimension != 2: raise ValueError("Domain must be 2D (dimension == 2)")
     if domain.containsInfinity: raise ValueError("Domain must be finite (containsInfinity == False)")
 
@@ -120,17 +170,24 @@ def convert_domain_to_wires(domain):
                 next = start.connection
         # Run forwards building the wire.
         next = start
-        builder = BRepBuilderAPI_MakeWire()
+        wireData = ShapeExtend_WireData()
         while next is not None:
             endpoints.remove(next)
             endpoints.remove(next.otherEnd)
             curve = convert_manifold_to_curve(next.curve.manifold)
-            edge = BRepBuilderAPI_MakeEdge2d(curve, next.t, next.otherEnd.t).Edge()
-            builder.Add(edge)
+            edge = BRepBuilderAPI_MakeEdge(curve, surface, next.t, next.otherEnd.t).Edge()
+            wireData.Add(edge)
             next = next.otherEnd.connection
             if next is start:
                 break
-        wire = builder.Wire()
+        fixer = ShapeFix_Wire()
+        fixer.SetSurface(surface)
+        fixer.SetPrecision(Manifold.minSeparation)
+        fixer.SetPreferencePCurveMode(True)
+        fixer.SetClosedWireMode(True)
+        fixer.Load(wireData)
+        fixer.Perform()
+        wire = fixer.Wire()
         # Reverse the direction of the wire if its movement is clockwise.
         # The movement is clockwise if the start point moves clockwise (or its a counterclockwise ending point).
         if start.clockwise == start.isStart:
@@ -139,71 +196,14 @@ def convert_domain_to_wires(domain):
 
     return wires
 
-def convert_manifold_to_surface(manifold):
-    if manifold.range_dimension() != 3: raise ValueError("Manifold must be a 3D surface")
-
-    if isinstance(manifold, Hyperplane):
-        hyperplane = manifold
-        point = gp_Pnt(float(hyperplane._point[0]), float(hyperplane._point[1]), float(hyperplane._point[2]))
-        normal = gp_Dir(float(hyperplane._normal[0]), float(hyperplane._normal[1]), float(hyperplane._normal[2]))
-        xAxis = gp_Dir(float(hyperplane._tangentSpace[0, 0]), float(hyperplane._tangentSpace[1, 0]), float(hyperplane._tangentSpace[2, 0]))
-        axes = gp_Ax3(point, normal, xAxis)
-        surface = Geom_Plane(axes)
-        flipNormal = False
-        xDirection = axes.XDirection()
-        yDirection = axes.YDirection()
-        tangentSpace = np.array(((xDirection.X(), xDirection.Y(), xDirection.Z()),
-            (yDirection.X(), yDirection.Y(), yDirection.Z()))).T
-        transform = np.linalg.inv(tangentSpace.T @ tangentSpace) @ (tangentSpace.T @ hyperplane._tangentSpace)
-    elif isinstance(manifold, Spline):
-        spline = manifold
-        if spline.nInd != 2: raise ValueError("Spline must be a surface (nInd == 2)")
-        if spline.order[0] <= 1 or spline.order[1] <= 1: raise ValueError("Spline order must be greater than 1")
-        if spline.order[0] > Geom_BSplineSurface.MaxDegree() or spline.order[1] > Geom_BSplineSurface.MaxDegree(): raise ValueError("Spline order must be <= Geom_BSplineSurface.MaxDegree")
-
-        poles = TColgp_Array2OfPnt(1, spline.nCoef[0], 1, spline.nCoef[1])
-        for i in range(spline.nCoef[0]):
-            for j in range(spline.nCoef[1]):
-                poles.SetValue(i + 1, j + 1, gp_Pnt(float(spline.coefs[0, i, j]), float(spline.coefs[1, i, j]), float(spline.coefs[2, i, j])))
-
-        knots, multiplicity = np.unique(spline.knots[0], return_counts=True)
-        uKnots = TColStd_Array1OfReal(1, len(knots))
-        uMultiplicity = TColStd_Array1OfInteger(1, len(knots))
-        for i in range(len(knots)):
-            uKnots.SetValue(i + 1, float(knots[i]))
-            uMultiplicity.SetValue(i + 1, int(multiplicity[i]))
-
-        knots, multiplicity = np.unique(spline.knots[1], return_counts=True)
-        vKnots = TColStd_Array1OfReal(1, len(knots))
-        vMultiplicity = TColStd_Array1OfInteger(1, len(knots))
-        for i in range(len(knots)):
-            vKnots.SetValue(i + 1, float(knots[i]))
-            vMultiplicity.SetValue(i + 1, int(multiplicity[i]))
-
-        surface = Geom_BSplineSurface(poles, uKnots, vKnots, uMultiplicity, vMultiplicity, spline.order[0] - 1, spline.order[1] - 1)
-        flipNormal = spline.metadata.get("flipNormal", False)
-        transform = None
-    else:
-        raise ValueError("Manifold must be a plane or spline")
-    
-    return surface, flipNormal, transform
-
-def convert_surface_to_face(surface, flipNormal = False, domain = None, domainTransform = None):
-    if domain is None:
-        wires = []
-    else:
-        if domainTransform is not None:
-            transformInverseTranspose = np.transpose(np.linalg.inv(domainTransform))
-            domain = domain.transform(domainTransform, transformInverseTranspose)
-        
-        wires = convert_domain_to_wires(domain)
-
+def convert_surface_to_face(surface, flipNormal = False, domain = None):
+    wires = [] if domain is None else convert_domain_to_wires(surface, domain)
     if wires:
         builder = BRepBuilderAPI_MakeFace(surface, wires[0])
         for wire in wires[1:]:
             builder.Add(wire)
 
-        ## Create required 3D edges
+        # Create required 3D edges
         fixer = ShapeFix_Face(builder.Face())
         fixer.Perform()
         face = fixer.Face()
@@ -217,11 +217,19 @@ def convert_surface_to_face(surface, flipNormal = False, domain = None, domainTr
 
 def convert_boundary_to_face(boundary):
     surface, flipNormal, transform = convert_manifold_to_surface(boundary.manifold)
-    return convert_surface_to_face(surface, flipNormal, boundary.domain, transform)
+    domain = boundary.domain if transform is None else boundary.domain.transform(transform)
+    return convert_surface_to_face(surface, flipNormal, domain)
 
 def convert_solid_to_shape(solid):
     if solid.dimension != 3: raise ValueError("Solid must be 3D (dimension == 3)")
     if solid.containsInfinity: raise ValueError("Solid must be finite (containsInfinity == False)")
+
+    builder = BRepBuilderAPI_Sewing(Manifold.minSeparation)
+    for boundary in solid.boundaries:
+        builder.Add(convert_boundary_to_face(boundary))
+    
+    builder.Perform()
+    return builder.SewedShape()
 
 def convert_shape_to_solid(shape):
     # Create empty solid.
