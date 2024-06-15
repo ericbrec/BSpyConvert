@@ -1,6 +1,6 @@
 import numpy as np
 from collections import namedtuple
-from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_NurbsConvert, BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace, BRepBuilderAPI_Sewing
+from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_NurbsConvert, BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire, BRepBuilderAPI_MakeFace, BRepBuilderAPI_Sewing
 from OCC.Core.ShapeExtend import ShapeExtend_WireData
 from OCC.Core.ShapeFix import ShapeFix_Face, ShapeFix_Wire
 from OCC.Core.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_Curve2d
@@ -11,7 +11,7 @@ from OCC.Core.Geom2d import Geom2d_BSplineCurve, Geom2d_Line
 from OCC.Core.gp import gp_Pnt, gp_Dir, gp_Ax3, gp_Pnt2d, gp_Dir2d
 from OCC.Core.TColgp import TColgp_Array2OfPnt, TColgp_Array1OfPnt2d
 from OCC.Core.TColStd import TColStd_Array1OfReal, TColStd_Array1OfInteger
-from OCC.Extend.TopologyUtils import TopologyExplorer
+from OCC.Extend.TopologyUtils import TopologyExplorer, WireExplorer
 from OCC.Core.GeomAbs import GeomAbs_BSplineSurface, GeomAbs_BSplineCurve
 from bspy import Manifold, Spline, Hyperplane, Boundary, Solid
 
@@ -72,6 +72,7 @@ def convert_manifold_to_curve(manifold):
         point = gp_Pnt2d(float(hyperplane._point[0]), float(hyperplane._point[1]))
         vector = gp_Dir2d(float(hyperplane._tangentSpace[0, 0]), float(hyperplane._tangentSpace[1, 0]))
         curve = Geom2d_Line(point, vector)
+        rescale = np.linalg.norm(hyperplane._tangentSpace[:, 0])
     elif isinstance(manifold, Spline):
         spline = manifold
         if spline.nInd != 1: raise ValueError("Spline must be a curve (nInd == 1)")
@@ -91,10 +92,11 @@ def convert_manifold_to_curve(manifold):
             uMultiplicity.SetValue(i + 1, int(multiplicity[i]))
 
         curve = Geom2d_BSplineCurve(poles, uKnots, uMultiplicity, spline.order[0] - 1)
+        rescale = 1.0
     else:
         raise ValueError("Manifold must be a line or spline")
     
-    return curve
+    return curve, rescale
 
 def convert_domain_to_wires(surface, domain):
     if domain.dimension != 2: raise ValueError("Domain must be 2D (dimension == 2)")
@@ -171,23 +173,58 @@ def convert_domain_to_wires(surface, domain):
         # Run forwards building the wire.
         next = start
         wireData = ShapeExtend_WireData()
+        builder = BRepBuilderAPI_MakeWire()
+        print("input wire")
+        np.set_printoptions(suppress=True)
         while next is not None:
             endpoints.remove(next)
             endpoints.remove(next.otherEnd)
-            curve = convert_manifold_to_curve(next.curve.manifold)
-            edge = BRepBuilderAPI_MakeEdge(curve, surface, next.t, next.otherEnd.t).Edge()
-            wireData.Add(edge)
+            curve, rescale = convert_manifold_to_curve(next.curve.manifold)
+            line = next.curve.manifold
+            uv1 = line.evaluate(np.atleast_1d(next.t))
+            uv2 = line.evaluate(np.atleast_1d(next.otherEnd.t))
+            puv1 = gp_Pnt2d()
+            puv2 = gp_Pnt2d()
+            curve.D0(rescale * next.t, puv1)
+            curve.D0(rescale * next.otherEnd.t, puv2)
+            print(f"edge: {uv1} -> {uv2}; {puv1.X()}, {puv1.Y()} -> {puv2.X()}, {puv2.Y()}")
+            pnt1 = gp_Pnt()
+            pnt2 = gp_Pnt()
+            surface.D0(*uv1, pnt1)
+            surface.D0(*uv2, pnt2)
+            print(f"edge: {pnt1.X()}, {pnt1.Y()}, {pnt1.Z()} -> {pnt2.X()}, {pnt2.Y()}, {pnt2.Z()}")
+            edge = BRepBuilderAPI_MakeEdge(curve, surface, rescale * next.t, rescale * next.otherEnd.t).Edge()
+            for vertex in TopologyExplorer(edge).vertices():
+                pnt = BRep_Tool.Pnt(vertex)
+                print(f"vertex: {pnt.X()}, {pnt.Y()}, {pnt.Z()}; tol: {BRep_Tool.Tolerance(vertex)}")
+            wireData.Add(edge, wireData.NbEdges() + 1)
+            builder.Add(edge)
+            print(f"builder: {builder.Error()}")
             next = next.otherEnd.connection
             if next is start:
                 break
-        fixer = ShapeFix_Wire()
-        fixer.SetSurface(surface)
-        fixer.SetPrecision(Manifold.minSeparation)
-        fixer.SetPreferencePCurveMode(True)
-        fixer.SetClosedWireMode(True)
-        fixer.Load(wireData)
-        fixer.Perform()
-        wire = fixer.Wire()
+        if next is None:
+            print("edge not closed")
+        if builder.IsDone():
+            print("builder wire")
+            wire = builder.Wire()
+        else:
+            print("fixer wire")
+            fixer = ShapeFix_Wire()
+            fixer.SetSurface(surface)
+            fixer.SetPrecision(Manifold.minSeparation)
+            fixer.SetPreferencePCurveMode(True)
+            fixer.SetClosedWireMode(True)
+            fixer.Load(wireData)
+            fixer.Perform()
+            wire = fixer.Wire()
+
+        print("output wire")
+        #explorer = TopologyExplorer(wire)
+        for vertex in TopologyExplorer(wire).vertices():
+            pnt = BRep_Tool.Pnt(vertex)
+            print(pnt.X(), pnt.Y(), pnt.Z(), end=" -> ")
+            print("")
         # Reverse the direction of the wire if its movement is clockwise.
         # The movement is clockwise if the start point moves clockwise (or its a counterclockwise ending point).
         if start.clockwise == start.isStart:
@@ -200,8 +237,8 @@ def convert_surface_to_face(surface, flipNormal = False, domain = None):
     wires = [] if domain is None else convert_domain_to_wires(surface, domain)
     if wires:
         builder = BRepBuilderAPI_MakeFace(surface, wires[0])
-        for wire in wires[1:]:
-            builder.Add(wire)
+        #for wire in wires[1:]:
+        #    builder.Add(wire)
 
         # Create required 3D edges
         fixer = ShapeFix_Face(builder.Face())
