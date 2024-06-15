@@ -108,7 +108,7 @@ def convert_domain_to_wires(surface, domain):
         def __init__(self, curve, t, clockwise, isStart, otherEnd=None):
             self.curve = curve
             self.t = t
-            self.xy = curve.manifold.evaluate((t,))
+            self.xy = curve.manifold.evaluate(t)
             self.clockwise = clockwise
             self.isStart = isStart
             self.otherEnd = otherEnd
@@ -195,7 +195,6 @@ def convert_domain_to_wires(surface, domain):
         if useBuilder and builder.IsDone():
             wire = builder.Wire()
         else:
-            print("fix wire")
             fixer = ShapeFix_Wire()
             fixer.SetSurface(surface)
             fixer.SetPrecision(Manifold.minSeparation)
@@ -210,7 +209,7 @@ def convert_domain_to_wires(surface, domain):
         if start.clockwise == start.isStart:
             wire.Reverse()
         
-        startUV = start.curve.manifold.evaluate(np.atleast_1d(start.t))
+        startUV = start.curve.manifold.evaluate(start.t)
         wires.append((gp_Pnt2d(float(startUV[0]), float(startUV[1])), wire))
 
     return wires
