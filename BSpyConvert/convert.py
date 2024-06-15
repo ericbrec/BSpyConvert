@@ -1,10 +1,11 @@
 import numpy as np
 from collections import namedtuple
 from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_NurbsConvert, BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire, BRepBuilderAPI_MakeFace, BRepBuilderAPI_Sewing
+from OCC.Core.BRepClass import BRepClass_FaceClassifier
 from OCC.Core.ShapeExtend import ShapeExtend_WireData
 from OCC.Core.ShapeFix import ShapeFix_Face, ShapeFix_Wire
 from OCC.Core.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_Curve2d
-from OCC.Core.TopAbs import TopAbs_FORWARD
+from OCC.Core.TopAbs import TopAbs_FORWARD, TopAbs_IN
 from OCC.Core.BRep import BRep_Tool
 from OCC.Core.Geom import Geom_BSplineSurface, Geom_Plane
 from OCC.Core.Geom2d import Geom2d_BSplineCurve, Geom2d_Line
@@ -98,7 +99,7 @@ def convert_manifold_to_curve(manifold):
     
     return curve, rescale
 
-def convert_domain_to_bundles(surface, domain):
+def convert_domain_to_wires(surface, domain):
     if domain.dimension != 2: raise ValueError("Domain must be 2D (dimension == 2)")
     if domain.containsInfinity: raise ValueError("Domain must be finite (containsInfinity == False)")
 
@@ -157,7 +158,8 @@ def convert_domain_to_bundles(surface, domain):
             c.ep2 is not connection.ep1 and c.ep2 is not connection.ep2]
         
     # Fourth, trace the contours from pairing to pairing.
-    bundles = []
+    wires = []
+    holes = []
     while endpoints:
         start = endpoints[0]
         if not start.isStart:
@@ -187,10 +189,9 @@ def convert_domain_to_bundles(surface, domain):
         if next is None:
             print("edge not closed")
         if builder.IsDone():
-            print("builder wire")
             wire = builder.Wire()
         else:
-            print("fixer wire")
+            print("fix wire")
             fixer = ShapeFix_Wire()
             fixer.SetSurface(surface)
             fixer.SetPrecision(Manifold.minSeparation)
@@ -202,12 +203,23 @@ def convert_domain_to_bundles(surface, domain):
 
         # Reverse the direction of the wire if its movement is clockwise.
         # The movement is clockwise if the start point moves clockwise (or its a counterclockwise ending point).
-        if start.clockwise == start.isStart:
-            print("Reverse")
+        reverse = start.clockwise == start.isStart
+        
+        # Check if this wire is a hole.
+        t = np.atleast_1d(0.5 * (start.t + start.otherEnd.t))
+        internalUV = start.curve.manifold.evaluate(t) - 2.0 * Manifold.minSeparation * start.curve.manifold.normal(t)
+        if domain.contains_point(internalUV):
+            wires.append(wire)
+        else:
+            # Change the wire from counterclockwise to clockwise.
+            reverse = not reverse
+            holes.append((gp_Pnt2d(float(internalUV[0]), float(internalUV[1])), wire))
+            print("hole")
+        
+        if reverse:
             wire.Reverse()
-        bundles.append([wire])
 
-    return bundles
+    return wires, holes
 
 def convert_surface_to_face(surface, flipNormal = False):
     face = BRepBuilderAPI_MakeFace(surface, 1.0e-6).Face()
@@ -218,15 +230,25 @@ def convert_surface_to_face(surface, flipNormal = False):
 def convert_boundary_to_faces(boundary):
     surface, flipNormal, transform = convert_manifold_to_surface(boundary.manifold)
     domain = boundary.domain if transform is None else boundary.domain.transform(transform)
-    bundles = convert_domain_to_bundles(surface, domain)
+    wires, holes = convert_domain_to_wires(surface, domain)
 
+    # Build faces without holes.
+    builders = []
+    for wire in wires:
+        builders.append(BRepBuilderAPI_MakeFace(surface, wire))
+    
+    # Add holes to their respective faces.
+    classifier = BRepClass_FaceClassifier()
+    for (pnt2d, wire) in holes:
+        for builder in builders:
+            classifier.Perform(builder.Face(), pnt2d, Manifold.minSeparation)
+            if classifier.State() == TopAbs_IN:
+                builder.Add(wire)
+                break
+
+    # Create required 3D edges for faces.
     faces = []
-    for bundle in bundles:
-        builder = BRepBuilderAPI_MakeFace(surface, bundle[0])
-        for wire in bundle[1:]:
-            builder.Add(wire)
-
-        # Create required 3D edges
+    for builder in builders:                
         fixer = ShapeFix_Face(builder.Face())
         fixer.Perform()
         faces.append(fixer.Face())
