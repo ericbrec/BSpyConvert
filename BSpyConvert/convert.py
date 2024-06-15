@@ -207,23 +207,13 @@ def convert_domain_to_wires(surface, domain):
 
         # Reverse the direction of the wire if its movement is clockwise.
         # The movement is clockwise if the start point moves clockwise (or its a counterclockwise ending point).
-        reverse = start.clockwise == start.isStart
-        
-        # Check if this wire is a hole.
-        t = np.atleast_1d(0.5 * (start.t + start.otherEnd.t))
-        internalUV = start.curve.manifold.evaluate(t) - 2.0 * Manifold.minSeparation * start.curve.manifold.normal(t)
-        if domain.contains_point(internalUV):
-            wires.append(wire)
-        else:
-            # Change the wire from counterclockwise to clockwise.
-            reverse = not reverse
-            holes.append((gp_Pnt2d(float(internalUV[0]), float(internalUV[1])), wire))
-            print("hole")
-        
-        if reverse:
+        if start.clockwise == start.isStart:
             wire.Reverse()
+        
+        startUV = start.curve.manifold.evaluate(np.atleast_1d(start.t))
+        wires.append((gp_Pnt2d(float(startUV[0]), float(startUV[1])), wire))
 
-    return wires, holes
+    return wires
 
 def convert_surface_to_face(surface, flipNormal = False):
     face = BRepBuilderAPI_MakeFace(surface, 1.0e-6).Face()
@@ -234,28 +224,48 @@ def convert_surface_to_face(surface, flipNormal = False):
 def convert_boundary_to_faces(boundary):
     surface, flipNormal, transform = convert_manifold_to_surface(boundary.manifold)
     domain = boundary.domain if transform is None else boundary.domain.transform(transform)
-    wires, holes = convert_domain_to_wires(surface, domain)
+    wires = convert_domain_to_wires(surface, domain)
 
     # Build faces without holes.
     builders = []
-    for wire in wires:
+    for (pnt2d, wire) in wires:
         builders.append(BRepBuilderAPI_MakeFace(surface, wire))
     
-    # Add holes to their respective faces.
+    # Determine which wires are within which other faces.
     classifier = BRepClass_FaceClassifier()
-    for (pnt2d, wire) in holes:
-        for builder in builders:
-            classifier.Perform(builder.Face(), pnt2d, Manifold.minSeparation)
-            if classifier.State() == TopAbs_IN:
-                builder.Add(wire)
-                break
+    nestings = []
+    for i, (pnt2d, wire) in enumerate(wires):
+        nesting = []
+        for j, builder in enumerate(builders):
+            if i != j:
+                classifier.Perform(builder.Face(), pnt2d, Manifold.minSeparation)
+                if classifier.State() == TopAbs_IN:
+                    nesting.append(j)
+        nestings.append(nesting)
 
-    # Create required 3D edges for faces.
+    # Place holes within faces.
+    for i, nesting in enumerate(nestings):
+        if len(nesting) % 2 == 1:
+            # The i'th wire is within an odd number of other faces.
+            # Now, find the most deeply nested of those faces.
+            j = nesting[0]
+            maxDepth = len(nestings[j])
+            for k in nesting[1:]:
+                if maxDepth < len(nestings[k]):
+                    j = k
+                    maxDepth = len(nestings[k])
+            # Remove this wire's face, since it's a hole in another face.
+            builders[i] = None
+            # Add hole to the other face.
+            builders[j].Add(wires[i][1])
+
+    # Create required 3D edges for remaining faces.
     faces = []
-    for builder in builders:                
-        fixer = ShapeFix_Face(builder.Face())
-        fixer.Perform()
-        faces.append(fixer.Face())
+    for builder in builders:
+        if builder is not None:
+            fixer = ShapeFix_Face(builder.Face())
+            fixer.Perform()
+            faces.append(fixer.Face())
     
     return faces
 
