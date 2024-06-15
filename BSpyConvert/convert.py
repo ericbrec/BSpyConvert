@@ -1,6 +1,6 @@
 import numpy as np
 from collections import namedtuple
-from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_NurbsConvert, BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire, BRepBuilderAPI_MakeFace, BRepBuilderAPI_Sewing
+from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_NurbsConvert, BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire, BRepBuilderAPI_MakeFace, BRepBuilderAPI_Sewing, BRepBuilderAPI_WireDone 
 from OCC.Core.BRepClass import BRepClass_FaceClassifier
 from OCC.Core.ShapeExtend import ShapeExtend_WireData
 from OCC.Core.ShapeFix import ShapeFix_Face, ShapeFix_Wire
@@ -176,19 +176,23 @@ def convert_domain_to_wires(surface, domain):
         next = start
         wireData = ShapeExtend_WireData()
         builder = BRepBuilderAPI_MakeWire()
+        useBuilder = True
         while next is not None:
             endpoints.remove(next)
             endpoints.remove(next.otherEnd)
             curve, rescale = convert_manifold_to_curve(next.curve.manifold)
             edge = BRepBuilderAPI_MakeEdge(curve, surface, rescale * next.t, rescale * next.otherEnd.t).Edge()
             wireData.Add(edge, wireData.NbEdges() + 1)
-            builder.Add(edge)
+            if useBuilder:
+                builder.Add(edge)
+                if builder.Error() != BRepBuilderAPI_WireDone:
+                    useBuilder = False
             next = next.otherEnd.connection
             if next is start:
                 break
         if next is None:
-            print("edge not closed")
-        if builder.IsDone():
+            useBuilder = False
+        if useBuilder and builder.IsDone():
             wire = builder.Wire()
         else:
             print("fix wire")
