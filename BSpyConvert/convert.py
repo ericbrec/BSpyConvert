@@ -98,7 +98,7 @@ def convert_manifold_to_curve(manifold):
     
     return curve, rescale
 
-def convert_domain_to_wires(surface, domain):
+def convert_domain_to_bundles(surface, domain):
     if domain.dimension != 2: raise ValueError("Domain must be 2D (dimension == 2)")
     if domain.containsInfinity: raise ValueError("Domain must be finite (containsInfinity == False)")
 
@@ -157,7 +157,7 @@ def convert_domain_to_wires(surface, domain):
             c.ep2 is not connection.ep1 and c.ep2 is not connection.ep2]
         
     # Fourth, trace the contours from pairing to pairing.
-    wires = []
+    bundles = []
     while endpoints:
         start = endpoints[0]
         if not start.isStart:
@@ -205,33 +205,33 @@ def convert_domain_to_wires(surface, domain):
         if start.clockwise == start.isStart:
             print("Reverse")
             wire.Reverse()
-        wires.append(wire)
+        bundles.append([wire])
 
-    return wires
+    return bundles
 
-def convert_surface_to_face(surface, flipNormal = False, domain = None):
-    wires = [] if domain is None else convert_domain_to_wires(surface, domain)
-    if wires:
-        builder = BRepBuilderAPI_MakeFace(surface, wires[0])
-        for wire in wires[1:]:
+def convert_surface_to_face(surface, flipNormal = False):
+    face = BRepBuilderAPI_MakeFace(surface, 1.0e-6).Face()
+    if flipNormal:
+        face.Reverse()
+    return face
+
+def convert_boundary_to_faces(boundary):
+    surface, flipNormal, transform = convert_manifold_to_surface(boundary.manifold)
+    domain = boundary.domain if transform is None else boundary.domain.transform(transform)
+    bundles = convert_domain_to_bundles(surface, domain)
+
+    faces = []
+    for bundle in bundles:
+        builder = BRepBuilderAPI_MakeFace(surface, bundle[0])
+        for wire in bundle[1:]:
             builder.Add(wire)
 
         # Create required 3D edges
         fixer = ShapeFix_Face(builder.Face())
         fixer.Perform()
-        face = fixer.Face()
-    else:
-        face = BRepBuilderAPI_MakeFace(surface, 1.0e-6).Face()
+        faces.append(fixer.Face())
     
-    if flipNormal:
-        face.Reverse()
-    
-    return face
-
-def convert_boundary_to_face(boundary):
-    surface, flipNormal, transform = convert_manifold_to_surface(boundary.manifold)
-    domain = boundary.domain if transform is None else boundary.domain.transform(transform)
-    return convert_surface_to_face(surface, flipNormal, domain)
+    return faces
 
 def convert_solid_to_shape(solid):
     if solid.dimension != 3: raise ValueError("Solid must be 3D (dimension == 3)")
@@ -239,7 +239,8 @@ def convert_solid_to_shape(solid):
 
     builder = BRepBuilderAPI_Sewing(Manifold.minSeparation)
     for boundary in solid.boundaries:
-        builder.Add(convert_boundary_to_face(boundary))
+        for face in convert_boundary_to_faces(boundary):
+            builder.Add(face)
     
     builder.Perform()
     return builder.SewedShape()

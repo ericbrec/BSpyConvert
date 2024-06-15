@@ -32,8 +32,8 @@ def export_step(fileName, object):
             if hasattr(object.manifold, "metadata"):
                 name = object.manifold.metadata.get("Name", name)
             Interface_Static.SetCVal("write.step.product.name", name)
-            face = convert.convert_boundary_to_face(object)
-            step_writer.Transfer(face, STEPControl_AsIs)
+            for face in convert.convert_boundary_to_faces(object):
+                step_writer.Transfer(face, STEPControl_AsIs)
         elif isinstance(object, Solid):
             shape = convert.convert_solid_to_shape(object)
             step_writer.Transfer(shape, STEPControl_AsIs)
