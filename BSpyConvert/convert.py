@@ -174,32 +174,13 @@ def convert_domain_to_wires(surface, domain):
         next = start
         wireData = ShapeExtend_WireData()
         builder = BRepBuilderAPI_MakeWire()
-        print("input wire")
-        np.set_printoptions(suppress=True)
         while next is not None:
             endpoints.remove(next)
             endpoints.remove(next.otherEnd)
             curve, rescale = convert_manifold_to_curve(next.curve.manifold)
-            line = next.curve.manifold
-            uv1 = line.evaluate(np.atleast_1d(next.t))
-            uv2 = line.evaluate(np.atleast_1d(next.otherEnd.t))
-            puv1 = gp_Pnt2d()
-            puv2 = gp_Pnt2d()
-            curve.D0(rescale * next.t, puv1)
-            curve.D0(rescale * next.otherEnd.t, puv2)
-            print(f"edge: {uv1} -> {uv2}; {puv1.X()}, {puv1.Y()} -> {puv2.X()}, {puv2.Y()}")
-            pnt1 = gp_Pnt()
-            pnt2 = gp_Pnt()
-            surface.D0(*uv1, pnt1)
-            surface.D0(*uv2, pnt2)
-            print(f"edge: {pnt1.X()}, {pnt1.Y()}, {pnt1.Z()} -> {pnt2.X()}, {pnt2.Y()}, {pnt2.Z()}")
             edge = BRepBuilderAPI_MakeEdge(curve, surface, rescale * next.t, rescale * next.otherEnd.t).Edge()
-            for vertex in TopologyExplorer(edge).vertices():
-                pnt = BRep_Tool.Pnt(vertex)
-                print(f"vertex: {pnt.X()}, {pnt.Y()}, {pnt.Z()}; tol: {BRep_Tool.Tolerance(vertex)}")
             wireData.Add(edge, wireData.NbEdges() + 1)
             builder.Add(edge)
-            print(f"builder: {builder.Error()}")
             next = next.otherEnd.connection
             if next is start:
                 break
@@ -219,15 +200,10 @@ def convert_domain_to_wires(surface, domain):
             fixer.Perform()
             wire = fixer.Wire()
 
-        print("output wire")
-        #explorer = TopologyExplorer(wire)
-        for vertex in TopologyExplorer(wire).vertices():
-            pnt = BRep_Tool.Pnt(vertex)
-            print(pnt.X(), pnt.Y(), pnt.Z(), end=" -> ")
-            print("")
         # Reverse the direction of the wire if its movement is clockwise.
         # The movement is clockwise if the start point moves clockwise (or its a counterclockwise ending point).
         if start.clockwise == start.isStart:
+            print("Reverse")
             wire.Reverse()
         wires.append(wire)
 
@@ -237,8 +213,8 @@ def convert_surface_to_face(surface, flipNormal = False, domain = None):
     wires = [] if domain is None else convert_domain_to_wires(surface, domain)
     if wires:
         builder = BRepBuilderAPI_MakeFace(surface, wires[0])
-        #for wire in wires[1:]:
-        #    builder.Add(wire)
+        for wire in wires[1:]:
+            builder.Add(wire)
 
         # Create required 3D edges
         fixer = ShapeFix_Face(builder.Face())
