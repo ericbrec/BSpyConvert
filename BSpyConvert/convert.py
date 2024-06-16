@@ -280,6 +280,31 @@ def convert_solid_to_shape(solid):
     builder.Perform()
     return builder.SewedShape()
 
+def convert_nurb_to_nub(nurb):
+    # Clamp both ends. This is necessary because OpenCascade nurbs can have poorly constructed splines.
+    nurb = nurb.clamp(tuple(range(nurb.nInd)), tuple(range(nurb.nInd)))
+    # Compute new order and new knots.
+    initialKnotList = []
+    newOrder = []
+    for order, knots in zip(nurb.order, nurb.knots):
+        unique, counts = np.unique(knots, return_counts=True)
+        initialKnots = []
+        newOrd = max(order, 4) # Min order is 4
+        for knot, count in zip(unique, counts):
+            # Only keep knots at C0 and C1 discontinuities.
+            if count >= order - 1:
+                initialKnots += [knot] * (newOrd - order + count)
+        initialKnotList.append(np.array(initialKnots, knots.dtype))
+        newOrder.append(newOrd)
+
+    # Define fit function as the rational b-spline.
+    def splineFit(uvw):
+        value = nurb(uvw)
+        return value[:-1] / value[-1]
+    
+    # Fit a nub to the nurb.
+    return Spline.fit(nurb.domain(), splineFit, newOrder, initialKnotList)
+
 def convert_shape_to_solid(shape):
     # Create empty solid.
     solid = Solid(3, False)
@@ -326,6 +351,10 @@ def convert_shape_to_solid(shape):
 
             # Create the Spline manifold.
             spline = Spline(2, nDep, order, nCoef, knots, coefs)
+            if nDep > 3:
+                spline = convert_nurb_to_nub(spline)
+
+            # Set proper orientation.
             faceFlipped = face.Orientation() != TopAbs_FORWARD
             faceFlipped = not faceFlipped if shellFlipped else faceFlipped
             if faceFlipped:
@@ -354,11 +383,15 @@ def convert_shape_to_solid(shape):
                     pole = poles.Value(i + 1)
                     coefs[0, i] = pole.X()
                     coefs[1, i] = pole.Y()
-                    if nDep > 3:
+                    if nDep > 2:
                         coefs[2, i] = weights.Value(i + 1)
 
                 # Create the domain spline manifold.
                 domainSpline = Spline(1, nDep, order, nCoef, knots, coefs)
+                if nDep > 2:
+                    domainSpline = convert_nurb_to_nub(domainSpline)
+
+                # Set proper orientation.
                 edgeFlipped = edge.Orientation() != TopAbs_FORWARD
                 edgeFlipped = not edgeFlipped if faceFlipped else edgeFlipped
                 if edgeFlipped:
