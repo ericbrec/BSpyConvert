@@ -311,7 +311,7 @@ def convert_shape_to_solid(shape):
 
     # Convert all shape geometry to nurbs.
     nurbs_shape = BRepBuilderAPI_NurbsConvert(shape, True).Shape()
-    explorer = TopologyExplorer(nurbs_shape)
+    explorer = TopologyExplorer(nurbs_shape, False)
 
     # Now, all edges should be BSpline curves and surfaces BSpline surfaces.
     # See https://www.opencascade.com/doc/occt-7.4.0/refman/html/class_b_rep_builder_a_p_i___nurbs_convert.html#details
@@ -329,20 +329,25 @@ def convert_shape_to_solid(shape):
             occSpline = surface.BSpline()
             order = (occSpline.UDegree() + 1, occSpline.VDegree() + 1)
             nCoef = (occSpline.NbUPoles(), occSpline.NbVPoles())
-            knots = (np.empty(order[0] + nCoef[0], float), np.empty(order[1] + nCoef[1], float))
-            uKnots = occSpline.UKnotSequence()
-            for i in range(order[0] + nCoef[0]):
-                knots[0][i] = uKnots.Value(i + 1)
-            vKnots = occSpline.VKnotSequence()
-            for i in range(order[1] + nCoef[1]):
-                knots[1][i] = vKnots.Value(i + 1)
-            poles = occSpline.Poles()
+            knots = []
+            unique = np.empty(occSpline.NbUKnots(), float)
+            counts = np.empty(occSpline.NbUKnots(), int)
+            for i in range(occSpline.NbUKnots()):
+                unique[i] = occSpline.UKnot(i + 1)
+                counts[i] = occSpline.UMultiplicity(i + 1)
+            knots.append(np.repeat(unique, counts))
+            unique = np.empty(occSpline.NbVKnots(), float)
+            counts = np.empty(occSpline.NbVKnots(), int)
+            for i in range(occSpline.NbVKnots()):
+                unique[i] = occSpline.VKnot(i + 1)
+                counts[i] = occSpline.VMultiplicity(i + 1)
+            knots.append(np.repeat(unique, counts))
             weights = occSpline.Weights()
             nDep = 3 if weights is None else 4
             coefs = np.empty((nDep, nCoef[0], nCoef[1]), float)
             for i in range(nCoef[0]):
                 for j in range(nCoef[1]):
-                    pole = poles.Value(i + 1, j + 1)
+                    pole = occSpline.Pole(i + 1, j + 1)
                     coefs[0, i, j] = pole.X()
                     coefs[1, i, j] = pole.Y()
                     coefs[2, i, j] = pole.Z()
@@ -371,16 +376,17 @@ def convert_shape_to_solid(shape):
                 occSpline = curve.BSpline()
                 order = (occSpline.Degree() + 1,)
                 nCoef = (occSpline.NbPoles(),)
-                knots = (np.empty(order[0] + nCoef[0], float),)
-                uKnots = occSpline.KnotSequence()
-                for i in range(order[0] + nCoef[0]):
-                    knots[0][i] = uKnots.Value(i + 1)
-                poles = occSpline.Poles()
+                unique = np.empty(occSpline.NbKnots(), float)
+                counts = np.empty(occSpline.NbKnots(), int)
+                for i in range(occSpline.NbKnots()):
+                    unique[i] = occSpline.Knot(i + 1)
+                    counts[i] = occSpline.Multiplicity(i + 1)
+                knots = (np.repeat(unique, counts),)
                 weights = occSpline.Weights()
                 nDep = 2 if weights is None else 3
                 coefs = np.empty((nDep, nCoef[0]), float)
                 for i in range(nCoef[0]):
-                    pole = poles.Value(i + 1)
+                    pole = occSpline.Pole(i + 1)
                     coefs[0, i] = pole.X()
                     coefs[1, i] = pole.Y()
                     if nDep > 2:
