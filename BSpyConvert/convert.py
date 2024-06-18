@@ -280,31 +280,6 @@ def convert_solid_to_shape(solid):
     builder.Perform()
     return builder.SewedShape()
 
-def convert_nurb_to_nub(nurb):
-    # Clamp both ends. This is necessary because OpenCascade nurbs can have poorly constructed splines.
-    nurb = nurb.clamp(tuple(range(nurb.nInd)), tuple(range(nurb.nInd)))
-    # Compute new order and new knots.
-    initialKnotList = []
-    newOrder = []
-    for order, knots in zip(nurb.order, nurb.knots):
-        unique, counts = np.unique(knots, return_counts=True)
-        initialKnots = []
-        newOrd = max(order, 4) # Min order is 4
-        for knot, count in zip(unique, counts):
-            # Only keep knots at C0 and C1 discontinuities.
-            if count >= order - 1:
-                initialKnots += [knot] * (newOrd - order + count)
-        initialKnotList.append(np.array(initialKnots, knots.dtype))
-        newOrder.append(newOrd)
-
-    # Define fit function as the rational b-spline.
-    def splineFit(uvw):
-        value = nurb(uvw)
-        return value[:-1] / value[-1]
-    
-    # Fit a nub to the nurb.
-    return Spline.fit(nurb.domain(), splineFit, newOrder, initialKnotList)
-
 def convert_shape_to_solid(shape):
     # Create empty solid.
     solid = Solid(3, False)
@@ -327,38 +302,58 @@ def convert_shape_to_solid(shape):
             
             # Get the BSpline parameters.
             occSpline = surface.BSpline()
-            order = (occSpline.UDegree() + 1, occSpline.VDegree() + 1)
-            nCoef = (occSpline.NbUPoles(), occSpline.NbVPoles())
+            useFit = False
+            weights = occSpline.Weights()
+            if weights is None:
+                order = (occSpline.UDegree() + 1, occSpline.VDegree() + 1)
+                elevation = (0, 0)
+                coefs = np.empty((3, occSpline.NbUPoles(), occSpline.NbVPoles()), float)
+                for i in range(occSpline.NbUPoles()):
+                    for j in range(occSpline.NbVPoles()):
+                        pole = occSpline.Pole(i + 1, j + 1)
+                        coefs[0, i, j] = pole.X()
+                        coefs[1, i, j] = pole.Y()
+                        coefs[2, i, j] = pole.Z()
+            else:
+                order = (max(occSpline.UDegree() + 1, 4 if occSpline.IsVRational() else 0),
+                    max(occSpline.VDegree() + 1, 4 if occSpline.IsURational() else 0))
+                elevation = (order[0] - occSpline.UDegree() - 1, order[1] - occSpline.VDegree() - 1)
+                useFit = True
             knots = []
             unique = np.empty(occSpline.NbUKnots(), float)
             counts = np.empty(occSpline.NbUKnots(), int)
             for i in range(occSpline.NbUKnots()):
                 unique[i] = occSpline.UKnot(i + 1)
-                counts[i] = occSpline.UMultiplicity(i + 1)
+                counts[i] = occSpline.UMultiplicity(i + 1) + elevation[0]
+            if occSpline.IsUPeriodic():
+                counts[0] = counts[-1] = order[0]
+                for i, count in enumerate(counts[1:-1]):
+                    counts[i + 1] = 0 if count < order[0] - 1 else count
+                useFit = True
             knots.append(np.repeat(unique, counts))
             unique = np.empty(occSpline.NbVKnots(), float)
             counts = np.empty(occSpline.NbVKnots(), int)
             for i in range(occSpline.NbVKnots()):
                 unique[i] = occSpline.VKnot(i + 1)
-                counts[i] = occSpline.VMultiplicity(i + 1)
+                counts[i] = occSpline.VMultiplicity(i + 1) + elevation[1]
+            if occSpline.IsVPeriodic():
+                counts[0] = counts[-1] = order[1]
+                for i, count in enumerate(counts[1:-1]):
+                    counts[i + 1] = 0 if count < order[1] - 1 else count
+                useFit = True
             knots.append(np.repeat(unique, counts))
-            weights = occSpline.Weights()
-            nDep = 3 if weights is None else 4
-            coefs = np.empty((nDep, nCoef[0], nCoef[1]), float)
-            for i in range(nCoef[0]):
-                for j in range(nCoef[1]):
-                    pole = occSpline.Pole(i + 1, j + 1)
-                    coefs[0, i, j] = pole.X()
-                    coefs[1, i, j] = pole.Y()
-                    coefs[2, i, j] = pole.Z()
-                    if nDep > 3:
-                        coefs[3, i, j] = weights.Value(i + 1, j + 1)
 
             # Create the Spline manifold.
-            spline = Spline(2, nDep, order, nCoef, knots, coefs)
-            if nDep > 3:
-                spline = convert_nurb_to_nub(spline)
-
+            if useFit:
+                # Fit the periodic and/or rational OCC surface.
+                def evaluate_surface(uvw):
+                    pnt = gp_Pnt()
+                    occSpline.D0(uvw[0], uvw[1], pnt)
+                    return np.array((pnt.X(), pnt.Y(), pnt.Z()))
+                spline = Spline.fit(np.array(occSpline.Bounds()).reshape(2, 2), evaluate_surface, order, knots)
+            else:
+                spline = Spline(2, 3, order, coefs.shape[1:], knots, coefs)
+            
             # Set proper orientation.
             faceFlipped = face.Orientation() != TopAbs_FORWARD
             faceFlipped = not faceFlipped if shellFlipped else faceFlipped
@@ -374,28 +369,43 @@ def convert_shape_to_solid(shape):
                 
                 # Get the BSpline parameters.
                 occSpline = curve.BSpline()
-                order = (occSpline.Degree() + 1,)
-                nCoef = (occSpline.NbPoles(),)
+                useFit = False
+                weights = occSpline.Weights()
+                if weights is None:
+                    order = occSpline.Degree() + 1
+                    elevation = 0
+                    coefs = np.empty((2, occSpline.NbPoles()), float)
+                    for i in range(occSpline.NbPoles()):
+                        pole = occSpline.Pole(i + 1)
+                        coefs[0, i] = pole.X()
+                        coefs[1, i] = pole.Y()
+                else:
+                    order = max(occSpline.Degree() + 1, 4 if occSpline.IsRational() else 0)
+                    elevation = order - occSpline.Degree() - 1
+                    useFit = True
+
                 unique = np.empty(occSpline.NbKnots(), float)
                 counts = np.empty(occSpline.NbKnots(), int)
                 for i in range(occSpline.NbKnots()):
                     unique[i] = occSpline.Knot(i + 1)
-                    counts[i] = occSpline.Multiplicity(i + 1)
-                knots = (np.repeat(unique, counts),)
-                weights = occSpline.Weights()
-                nDep = 2 if weights is None else 3
-                coefs = np.empty((nDep, nCoef[0]), float)
-                for i in range(nCoef[0]):
-                    pole = occSpline.Pole(i + 1)
-                    coefs[0, i] = pole.X()
-                    coefs[1, i] = pole.Y()
-                    if nDep > 2:
-                        coefs[2, i] = weights.Value(i + 1)
+                    counts[i] = occSpline.Multiplicity(i + 1) + elevation
+                if occSpline.IsPeriodic():
+                    counts[0] = counts[-1] = order
+                    for i, count in enumerate(counts[1:-1]):
+                        counts[i + 1] = 0 if count < order - 1 else count
+                    useFit = True
+                knots = np.repeat(unique, counts)
 
                 # Create the domain spline manifold.
-                domainSpline = Spline(1, nDep, order, nCoef, knots, coefs)
-                if nDep > 2:
-                    domainSpline = convert_nurb_to_nub(domainSpline)
+                if useFit:
+                    # Fit the periodic and/or rational OCC curve.
+                    def evaluate_curve(uvw):
+                        pnt = gp_Pnt2d()
+                        occSpline.D0(uvw[0], pnt)
+                        return np.array((pnt.X(), pnt.Y()))
+                    domainSpline = Spline.fit(np.array(((occSpline.FirstParameter(), occSpline.LastParameter()),)), evaluate_curve, (order,), (knots,))
+                else:
+                    domainSpline = Spline(1, 2, (order,), coefs.shape[1:], (knots,), coefs)
 
                 # Set proper orientation.
                 edgeFlipped = edge.Orientation() != TopAbs_FORWARD
