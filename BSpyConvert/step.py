@@ -4,6 +4,7 @@ from OCC.Core.IFSelect import IFSelect_RetDone
 from OCC.Core.Interface import Interface_HArray1OfHAsciiString
 from OCC.Core.APIHeaderSection import APIHeaderSection_MakeHeader
 from OCC.Core.TCollection import TCollection_HAsciiString
+from OCC.Core.TopoDS import TopoDS_Shape
 from bspy import Solid, Boundary, Manifold
 import BSpyConvert.convert as convert
 
@@ -12,7 +13,7 @@ def export_step(fileName, object):
     step_writer = STEPControl_Writer()
     Interface_Static.SetCVal("write.step.schema", "AP203")
 
-    if isinstance(object, (Solid, Boundary, Manifold)):
+    if isinstance(object, (TopoDS_Shape, Solid, Boundary, Manifold)):
         objects = [object]
     else:
         objects = object
@@ -20,7 +21,7 @@ def export_step(fileName, object):
     objectCount = 1
     for object in objects:
         if isinstance(object, Manifold):
-            name = f"Face {objectCount}"
+            name = f"Manifold {objectCount}"
             if hasattr(object, "metadata"):
                 name = object.metadata.get("Name", name)
             Interface_Static.SetCVal("write.step.product.name", name)
@@ -28,7 +29,7 @@ def export_step(fileName, object):
             face = convert.convert_surface_to_face(surface, flipNormal)
             step_writer.Transfer(face, STEPControl_AsIs)
         elif isinstance(object, Boundary):
-            name = f"Face {objectCount}"
+            name = f"Boundary {objectCount}"
             if hasattr(object.manifold, "metadata"):
                 name = object.manifold.metadata.get("Name", name)
             Interface_Static.SetCVal("write.step.product.name", name)
@@ -36,7 +37,11 @@ def export_step(fileName, object):
                 step_writer.Transfer(face, STEPControl_AsIs)
         elif isinstance(object, Solid):
             shape = convert.convert_solid_to_shape(object)
+            Interface_Static.SetCVal("write.step.product.name", f"Solid {objectCount}")
             step_writer.Transfer(shape, STEPControl_AsIs)
+        elif isinstance(object, TopoDS_Shape):
+            Interface_Static.SetCVal("write.step.product.name", f"Shape {objectCount}")
+            step_writer.Transfer(object, STEPControl_AsIs)
         objectCount += 1
 
     # Create STEP header.
@@ -44,12 +49,12 @@ def export_step(fileName, object):
     model.ClearHeader()
 
     header = APIHeaderSection_MakeHeader()
-    header.SetName(TCollection_HAsciiString("BSpy Spline"))
+    header.SetName(TCollection_HAsciiString("BSpyConvert"))
     header.SetAuthorValue(1, TCollection_HAsciiString("Eric Brechner"))
-    header.SetAuthorisation(TCollection_HAsciiString("BSpy (c) 2024"))
+    header.SetAuthorisation(TCollection_HAsciiString("BSpyConvert (c) 2024"))
 
     description = Interface_HArray1OfHAsciiString(1, 1)
-    description.SetValue(1, TCollection_HAsciiString("A b-spline surface produced by BSpy"))
+    description.SetValue(1, TCollection_HAsciiString("Objects produced by BSpy"))
     header.SetDescription(description)
 
     org = Interface_HArray1OfHAsciiString(1, 1)
