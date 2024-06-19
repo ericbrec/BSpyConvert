@@ -295,143 +295,150 @@ def _flip_normal(parentShape, childShape):
     
     return parentOrientation != childOrientation
 
-def convert_shape_to_solid(shape):
-    # Create empty solid.
-    solid = Solid(3, False)
-
+def convert_shape_to_solids(shape):
     # Convert all shape geometry to nurbs.
     nurbs_shape = BRepBuilderAPI_NurbsConvert(shape, True).Shape()
-    explorer = TopologyExplorer(nurbs_shape, False)
-
     # Now, all edges should be BSpline curves and surfaces BSpline surfaces.
     # See https://www.opencascade.com/doc/occt-7.4.0/refman/html/class_b_rep_builder_a_p_i___nurbs_convert.html#details
 
-    # Convert each face to a Boundary with a Spline manifold.
-    for shell in explorer.shells():
-        for face in explorer.faces_from_solids(shell):
-            surface = BRepAdaptor_Surface(face, True)
-            if not surface.GetType() == GeomAbs_BSplineSurface:
-                raise AssertionError("Face was not converted to a Geom_BSplineSurface")
-            
-            # Get the BSpline parameters.
-            occSpline = surface.BSpline()
-            useFit = False
-            weights = occSpline.Weights()
-            if weights is None:
-                order = (occSpline.UDegree() + 1, occSpline.VDegree() + 1)
-                elevation = (0, 0)
-                coefs = np.empty((3, occSpline.NbUPoles(), occSpline.NbVPoles()), float)
-                for i in range(occSpline.NbUPoles()):
-                    for j in range(occSpline.NbVPoles()):
-                        pole = occSpline.Pole(i + 1, j + 1)
-                        coefs[0, i, j] = pole.X()
-                        coefs[1, i, j] = pole.Y()
-                        coefs[2, i, j] = pole.Z()
-            else:
-                order = (max(occSpline.UDegree() + 1, 4 if occSpline.IsVRational() else 0),
-                    max(occSpline.VDegree() + 1, 4 if occSpline.IsURational() else 0))
-                elevation = (order[0] - occSpline.UDegree() - 1, order[1] - occSpline.VDegree() - 1)
-                useFit = True
-            knots = []
-            unique = np.empty(occSpline.NbUKnots(), float)
-            counts = np.empty(occSpline.NbUKnots(), int)
-            for i in range(occSpline.NbUKnots()):
-                unique[i] = occSpline.UKnot(i + 1)
-                counts[i] = occSpline.UMultiplicity(i + 1) + elevation[0]
-            if occSpline.IsUPeriodic():
-                counts[0] = counts[-1] = order[0]
-                for i, count in enumerate(counts[1:-1]):
-                    counts[i + 1] = 0 if count < order[0] - 1 else count
-                useFit = True
-            knots.append(np.repeat(unique, counts))
-            unique = np.empty(occSpline.NbVKnots(), float)
-            counts = np.empty(occSpline.NbVKnots(), int)
-            for i in range(occSpline.NbVKnots()):
-                unique[i] = occSpline.VKnot(i + 1)
-                counts[i] = occSpline.VMultiplicity(i + 1) + elevation[1]
-            if occSpline.IsVPeriodic():
-                counts[0] = counts[-1] = order[1]
-                for i, count in enumerate(counts[1:-1]):
-                    counts[i + 1] = 0 if count < order[1] - 1 else count
-                useFit = True
-            knots.append(np.repeat(unique, counts))
+    solids = []
+    explorer = TopologyExplorer(nurbs_shape, False)
+    compounds = explorer.compounds() if explorer.number_of_compounds() > 0 else [nurbs_shape]
+    for compound in compounds:
+        explorer = TopologyExplorer(compound, False)
+        occSolids = explorer.solids() if explorer.number_of_solids() > 0 else [compound]
+        for occSolid in occSolids:
+            # Create empty solid.
+            solid = Solid(3, False)
+            solids.append(solid)
 
-            # Create the Spline manifold.
-            if useFit:
-                # Fit the periodic and/or rational OCC surface.
-                def evaluate_surface(uvw):
-                    pnt = gp_Pnt()
-                    occSpline.D0(uvw[0], uvw[1], pnt)
-                    return np.array((pnt.X(), pnt.Y(), pnt.Z()))
-                spline = Spline.fit(np.array(occSpline.Bounds()).reshape(2, 2), evaluate_surface, order, knots)
-            else:
-                spline = Spline(2, 3, order, coefs.shape[1:], knots, coefs)
-            
-            # Set proper orientation.
-            if _flip_normal(shell, face):
-                spline = spline.flip_normal()
+            explorer = TopologyExplorer(occSolid, False)
+            shells = explorer.shells() if explorer.number_of_shells() > 0 else [occSolid]
+            for shell in shells:
+                for face in explorer.faces_from_solids(shell):
+                    surface = BRepAdaptor_Surface(face, True)
+                    if not surface.GetType() == GeomAbs_BSplineSurface:
+                        raise AssertionError("Face was not converted to a Geom_BSplineSurface")
+                    
+                    # Get the BSpline parameters.
+                    occSpline = surface.BSpline()
+                    useFit = False
+                    weights = occSpline.Weights()
+                    if weights is None:
+                        order = (occSpline.UDegree() + 1, occSpline.VDegree() + 1)
+                        elevation = (0, 0)
+                        coefs = np.empty((3, occSpline.NbUPoles(), occSpline.NbVPoles()), float)
+                        for i in range(occSpline.NbUPoles()):
+                            for j in range(occSpline.NbVPoles()):
+                                pole = occSpline.Pole(i + 1, j + 1)
+                                coefs[0, i, j] = pole.X()
+                                coefs[1, i, j] = pole.Y()
+                                coefs[2, i, j] = pole.Z()
+                    else:
+                        order = (max(occSpline.UDegree() + 1, 4 if occSpline.IsVRational() else 0),
+                            max(occSpline.VDegree() + 1, 4 if occSpline.IsURational() else 0))
+                        elevation = (order[0] - occSpline.UDegree() - 1, order[1] - occSpline.VDegree() - 1)
+                        useFit = True
+                    knots = []
+                    unique = np.empty(occSpline.NbUKnots(), float)
+                    counts = np.empty(occSpline.NbUKnots(), int)
+                    for i in range(occSpline.NbUKnots()):
+                        unique[i] = occSpline.UKnot(i + 1)
+                        counts[i] = occSpline.UMultiplicity(i + 1) + elevation[0]
+                    if occSpline.IsUPeriodic():
+                        counts[0] = counts[-1] = order[0]
+                        for i, count in enumerate(counts[1:-1]):
+                            counts[i + 1] = 0 if count < order[0] - 1 else count
+                        useFit = True
+                    knots.append(np.repeat(unique, counts))
+                    unique = np.empty(occSpline.NbVKnots(), float)
+                    counts = np.empty(occSpline.NbVKnots(), int)
+                    for i in range(occSpline.NbVKnots()):
+                        unique[i] = occSpline.VKnot(i + 1)
+                        counts[i] = occSpline.VMultiplicity(i + 1) + elevation[1]
+                    if occSpline.IsVPeriodic():
+                        counts[0] = counts[-1] = order[1]
+                        for i, count in enumerate(counts[1:-1]):
+                            counts[i + 1] = 0 if count < order[1] - 1 else count
+                        useFit = True
+                    knots.append(np.repeat(unique, counts))
 
-            # Create the spline domain boundaries.
-            domain = Solid(2, False)
-            for edge in explorer.edges_from_face(face):
-                curve = BRepAdaptor_Curve2d(edge, face)
-                if not curve.GetType() == GeomAbs_BSplineCurve:
-                    raise AssertionError("Edge was not converted to a Geom_BSplineCurve")
-                
-                # Get the BSpline parameters.
-                occSpline = curve.BSpline()
-                useFit = False
-                weights = occSpline.Weights()
-                if weights is None:
-                    order = occSpline.Degree() + 1
-                    elevation = 0
-                    coefs = np.empty((2, occSpline.NbPoles()), float)
-                    for i in range(occSpline.NbPoles()):
-                        pole = occSpline.Pole(i + 1)
-                        coefs[0, i] = pole.X()
-                        coefs[1, i] = pole.Y()
-                else:
-                    order = max(occSpline.Degree() + 1, 4 if occSpline.IsRational() else 0)
-                    elevation = order - occSpline.Degree() - 1
-                    useFit = True
+                    # Create the Spline manifold.
+                    if useFit:
+                        # Fit the periodic and/or rational OCC surface.
+                        def evaluate_surface(uvw):
+                            pnt = gp_Pnt()
+                            occSpline.D0(uvw[0], uvw[1], pnt)
+                            return np.array((pnt.X(), pnt.Y(), pnt.Z()))
+                        spline = Spline.fit(np.array(occSpline.Bounds()).reshape(2, 2), evaluate_surface, order, knots)
+                    else:
+                        spline = Spline(2, 3, order, coefs.shape[1:], knots, coefs)
+                    
+                    # Set proper orientation.
+                    if _flip_normal(shell, face):
+                        spline = spline.flip_normal()
 
-                unique = np.empty(occSpline.NbKnots(), float)
-                counts = np.empty(occSpline.NbKnots(), int)
-                for i in range(occSpline.NbKnots()):
-                    unique[i] = occSpline.Knot(i + 1)
-                    counts[i] = occSpline.Multiplicity(i + 1) + elevation
-                if occSpline.IsPeriodic():
-                    counts[0] = counts[-1] = order
-                    for i, count in enumerate(counts[1:-1]):
-                        counts[i + 1] = 0 if count < order - 1 else count
-                    useFit = True
-                knots = np.repeat(unique, counts)
+                    # Create the spline domain boundaries.
+                    domain = Solid(2, False)
+                    for edge in explorer.edges_from_face(face):
+                        curve = BRepAdaptor_Curve2d(edge, face)
+                        if not curve.GetType() == GeomAbs_BSplineCurve:
+                            raise AssertionError("Edge was not converted to a Geom_BSplineCurve")
+                        
+                        # Get the BSpline parameters.
+                        occSpline = curve.BSpline()
+                        useFit = False
+                        weights = occSpline.Weights()
+                        if weights is None:
+                            order = occSpline.Degree() + 1
+                            elevation = 0
+                            coefs = np.empty((2, occSpline.NbPoles()), float)
+                            for i in range(occSpline.NbPoles()):
+                                pole = occSpline.Pole(i + 1)
+                                coefs[0, i] = pole.X()
+                                coefs[1, i] = pole.Y()
+                        else:
+                            order = max(occSpline.Degree() + 1, 4 if occSpline.IsRational() else 0)
+                            elevation = order - occSpline.Degree() - 1
+                            useFit = True
 
-                # Create the domain spline manifold.
-                if useFit:
-                    # Fit the periodic and/or rational OCC curve.
-                    def evaluate_curve(uvw):
-                        pnt = gp_Pnt2d()
-                        occSpline.D0(uvw[0], pnt)
-                        return np.array((pnt.X(), pnt.Y()))
-                    domainSpline = Spline.fit(np.array(((occSpline.FirstParameter(), occSpline.LastParameter()),)), evaluate_curve, (order,), (knots,))
-                else:
-                    domainSpline = Spline(1, 2, (order,), coefs.shape[1:], (knots,), coefs)
+                        unique = np.empty(occSpline.NbKnots(), float)
+                        counts = np.empty(occSpline.NbKnots(), int)
+                        for i in range(occSpline.NbKnots()):
+                            unique[i] = occSpline.Knot(i + 1)
+                            counts[i] = occSpline.Multiplicity(i + 1) + elevation
+                        if occSpline.IsPeriodic():
+                            counts[0] = counts[-1] = order
+                            for i, count in enumerate(counts[1:-1]):
+                                counts[i + 1] = 0 if count < order - 1 else count
+                            useFit = True
+                        knots = np.repeat(unique, counts)
 
-                # Set proper orientation.
-                if _flip_normal(face, edge):
-                    domainSpline = domainSpline.flip_normal()
+                        # Create the domain spline manifold.
+                        if useFit:
+                            # Fit the periodic and/or rational OCC curve.
+                            def evaluate_curve(uvw):
+                                pnt = gp_Pnt2d()
+                                occSpline.D0(uvw[0], pnt)
+                                return np.array((pnt.X(), pnt.Y()))
+                            domainSpline = Spline.fit(np.array(((occSpline.FirstParameter(), occSpline.LastParameter()),)), evaluate_curve, (order,), (knots,))
+                        else:
+                            domainSpline = Spline(1, 2, (order,), coefs.shape[1:], (knots,), coefs)
 
-                # Create the domain spline domain boundaries.
-                domainSplineDomain = Solid(1, False)
-                for vertex in explorer.vertices_from_edge(edge):
-                    done, parameter = BRep_Tool.Parameter(vertex, edge)
-                    if done:
-                        normal = 1.0 if _flip_normal(edge, vertex) else -1.0
-                        domainSplineDomain.add_boundary(Boundary(Hyperplane(normal, parameter, 0.0), Solid(0, True)))
-                domain.add_boundary(Boundary(domainSpline, domainSplineDomain))
+                        # Set proper orientation.
+                        if _flip_normal(face, edge):
+                            domainSpline = domainSpline.flip_normal()
 
-            # Create the solid boundary
-            solid.add_boundary(Boundary(spline, domain))
+                        # Create the domain spline domain boundaries.
+                        domainSplineDomain = Solid(1, False)
+                        for vertex in explorer.vertices_from_edge(edge):
+                            done, parameter = BRep_Tool.Parameter(vertex, edge)
+                            if done:
+                                normal = 1.0 if _flip_normal(edge, vertex) else -1.0
+                                domainSplineDomain.add_boundary(Boundary(Hyperplane(normal, parameter, 0.0), Solid(0, True)))
+                        domain.add_boundary(Boundary(domainSpline, domainSplineDomain))
+
+                    # Create the solid boundary
+                    solid.add_boundary(Boundary(spline, domain))
     
-    return solid
+    return solids

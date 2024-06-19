@@ -15,7 +15,7 @@ def import_iges(fileName):
     for i in range(reader.NbShapes()):
         shape = reader.Shape(i + 1)
         if not shape.IsNull():
-            solids.append(convert.convert_shape_to_solid(shape))
+            solids += convert.convert_shape_to_solids(shape)
     
     return solids
 
@@ -31,6 +31,6 @@ def import_step(fileName):
     for i in range(reader.NbShapes()):
         shape = reader.Shape(i + 1)
         if not shape.IsNull():
-            solids.append(convert.convert_shape_to_solid(shape))
+            solids += convert.convert_shape_to_solids(shape)
     
     return solids
