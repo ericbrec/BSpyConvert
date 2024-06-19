@@ -1,22 +1,41 @@
 import numpy as np
 from collections import namedtuple
+from OCC.Core.BRep import BRep_Tool
 from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_NurbsConvert, BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire, BRepBuilderAPI_MakeFace, BRepBuilderAPI_Sewing, BRepBuilderAPI_WireDone 
+from OCC.Core.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_Curve2d
 from OCC.Core.BRepClass import BRepClass_FaceClassifier
 from OCC.Core.ShapeExtend import ShapeExtend_WireData
 from OCC.Core.ShapeFix import ShapeFix_Face, ShapeFix_Wire
-from OCC.Core.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_Curve2d
 from OCC.Core.TopAbs import TopAbs_FORWARD, TopAbs_REVERSED, TopAbs_INTERNAL, TopAbs_EXTERNAL, TopAbs_IN
-from OCC.Core.BRep import BRep_Tool
 from OCC.Core.Geom import Geom_BSplineSurface, Geom_Plane
 from OCC.Core.Geom2d import Geom2d_BSplineCurve, Geom2d_Line
+from OCC.Core.GeomAbs import GeomAbs_BSplineSurface, GeomAbs_BSplineCurve
 from OCC.Core.gp import gp_Pnt, gp_Dir, gp_Ax3, gp_Pnt2d, gp_Dir2d
 from OCC.Core.TColgp import TColgp_Array2OfPnt, TColgp_Array1OfPnt2d
 from OCC.Core.TColStd import TColStd_Array1OfReal, TColStd_Array1OfInteger
 from OCC.Extend.TopologyUtils import TopologyExplorer
-from OCC.Core.GeomAbs import GeomAbs_BSplineSurface, GeomAbs_BSplineCurve
 from bspy import Manifold, Spline, Hyperplane, Boundary, Solid
 
 def convert_manifold_to_surface(manifold):
+    """
+    Convert a BSpy Manifold to an OCC Geom_Surface.
+
+    Parameters
+    ----------
+    manifold : `BSpy.Manifold`
+        The BSpy Manifold (a Spline or Hyperplane). Must have a domain_dimension of 2 and range_dimension of 3.
+
+    Returns
+    -------
+    surface : `OCC.Core.Geom.Geom_Surface`
+        The OpenCascade surface.
+    
+    flipNormal: `bool`
+        If flipNormal is True, the surface's normal should be flipped if it's used as a face.
+    
+    transform: `numpy.ndarray`
+        A 2x2 transformation matrix to be applied to the domain of the surface if it's used as a face.
+    """
     if manifold.range_dimension() != 3: raise ValueError("Manifold must be a 3D surface")
 
     if isinstance(manifold, Hyperplane):
@@ -66,6 +85,22 @@ def convert_manifold_to_surface(manifold):
     return surface, flipNormal, transform
 
 def convert_manifold_to_curve(manifold):
+    """
+    Convert a BSpy Manifold to an OCC Geom_Curve.
+
+    Parameters
+    ----------
+    manifold : `BSpy.Manifold`
+        The BSpy Manifold (a Spline or Hyperplane). Must have a domain_dimension of 1 and range_dimension of 2.
+
+    Returns
+    -------
+    curve : `OCC.Core.Geom.Geom_Curve`
+        The OpenCascade curve.
+    
+    rescale : `float`
+        The rescaling factor to be applied to the curve's domain should if be used as an edge.
+    """
     if manifold.range_dimension() != 2: raise ValueError("Manifold must be a 2D line or spline")
 
     if isinstance(manifold, Hyperplane):
@@ -100,6 +135,26 @@ def convert_manifold_to_curve(manifold):
     return curve, rescale
 
 def convert_domain_to_wires(surface, domain):
+    """
+    Convert a BSpy boundary domain to a list of OCC TopoDS_Wire.
+
+    Parameters
+    ----------
+    surface : `OCC.Core.Geom.Geom_Surface`
+        The OpenCascade surface whose domain is trimmed by `domain`.
+
+    domain : `BSpy.Solid`
+        The BSpy Solid in the parameter space of `surface` that trims the surface. It's dimension must be 2.
+
+    Returns
+    -------
+    wires : `list` of `OCC.Core.TopoDS.TopoDS_Wire`
+        The list of OpenCascade wires that trim the surface's parameter space.
+
+    See Also
+    --------
+    `convert_manifold_to_surface` : Convert a BSpy Manifold to an OCC Geom_Surface.
+    """
     if domain.dimension != 2: raise ValueError("Domain must be 2D (dimension == 2)")
     if domain.containsInfinity: raise ValueError("Domain must be finite (containsInfinity == False)")
 
@@ -215,12 +270,46 @@ def convert_domain_to_wires(surface, domain):
     return wires
 
 def convert_surface_to_face(surface, flipNormal = False):
+    """
+    Convert an OCC Geom_Surface to an untrimmed OCC TopoDS_Face.
+
+    Parameters
+    ----------
+    surface : `OCC.Core.Geom.Geom_Surface`
+        The OpenCascade surface.
+
+    flipNormal : `bool`, optional
+        If flipNormal is True, the face's orientation will be opposite the natural normal of the surface. The default is False.
+
+    Returns
+    -------
+    face : `OCC.Core.TopoDS.TopoDS_Face`
+        The untrimmed OpenCascade face.
+    """
     face = BRepBuilderAPI_MakeFace(surface, 1.0e-6).Face()
     if flipNormal:
         face.Reverse()
     return face
 
 def convert_boundary_to_faces(boundary):
+    """
+    Convert a BSpy Boundary to a list of OCC TopoDS_Face.
+
+    Parameters
+    ----------
+    boundary : `BSpy.Boundary`
+        The boundary, whose manifold.range_dimension must be 3.
+
+    Returns
+    -------
+    faces : `list` of `OCC.Core.TopoDS.TopoDS_Face`
+        The list of OpenCascade faces that represent the Boundary.
+
+    See Also
+    --------
+    `convert_manifold_to_surface` : Convert a BSpy Manifold to an OCC Geom_Surface.
+    `convert_domain_to_wires` : Convert a BSpy boundary domain to a list of OCC TopoDS_Wire.
+    """
     surface, flipNormal, transform = convert_manifold_to_surface(boundary.manifold)
     domain = boundary.domain if transform is None else boundary.domain.transform(transform)
     wires = convert_domain_to_wires(surface, domain)
@@ -269,6 +358,19 @@ def convert_boundary_to_faces(boundary):
     return faces
 
 def convert_solid_to_shape(solid):
+    """
+    Convert a finite BSpy Solid to an OCC TopoDS_Shape.
+
+    Parameters
+    ----------
+    solid : `BSpy.Solid`
+        The finite solid, whose dimension must be 3.
+
+    Returns
+    -------
+    shape : `OCC.Core.TopoDS.TopoDS_Shape`
+        The OpenCascade shape that represents the solid.
+    """
     if solid.dimension != 3: raise ValueError("Solid must be 3D (dimension == 3)")
     if solid.containsInfinity: raise ValueError("Solid must be finite (containsInfinity == False)")
 
@@ -281,6 +383,7 @@ def convert_solid_to_shape(solid):
     return builder.SewedShape()
 
 def _flip_normal(parentShape, childShape):
+    """Determine whether or not a child's normal should be flipped based on the parent's and child's orientation."""
     parentOrientation = parentShape.Orientation()
     if parentOrientation == TopAbs_EXTERNAL:
         parentOrientation = TopAbs_FORWARD
@@ -296,6 +399,19 @@ def _flip_normal(parentShape, childShape):
     return parentOrientation != childOrientation
 
 def convert_shape_to_solids(shape):
+    """
+    Convert an OCC TopoDS_Shape to a list of BSpy Solid.
+
+    Parameters
+    ----------
+    shape : `OCC.Core.TopoDS.TopoDS_Shape`
+        The OpenCascade shape.
+
+    Returns
+    -------
+    solids : `list` of `BSpy.Solid`
+        The list of solids.
+    """
     # Convert all shape geometry to nurbs.
     nurbs_shape = BRepBuilderAPI_NurbsConvert(shape, True).Shape()
     # Now, all edges should be BSpline curves and surfaces BSpline surfaces.
