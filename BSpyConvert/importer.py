@@ -4,6 +4,19 @@ from OCC.Core.IFSelect import IFSelect_RetDone
 import BSpyConvert.convert as convert
 
 def import_iges(fileName):
+    """
+    Import an IGES file into BSpy.
+
+    Parameters
+    ----------
+    fileName : `str`
+        The path to the IGES file, including extension.
+
+    Returns
+    -------
+    solids : `list` of `BSpy.Solid`
+        The list of BSpy solids.
+    """
     reader = IGESControl_Reader()
     status = reader.ReadFile(fileName)
     if status != IFSelect_RetDone:
@@ -20,6 +33,19 @@ def import_iges(fileName):
     return solids
 
 def import_step(fileName):
+    """
+    Import a STEP file into BSpy.
+
+    Parameters
+    ----------
+    fileName : `str`
+        The path to the STEP file, including extension.
+
+    Returns
+    -------
+    solids : `list` of `BSpy.Solid`
+        The list of BSpy solids.
+    """
     reader = STEPControl_Reader()
     status = reader.ReadFile(fileName)
     if status != IFSelect_RetDone:

@@ -11,6 +11,17 @@ from bspy import Solid, Boundary, Manifold
 import BSpyConvert.convert as convert
 
 def export_iges(fileName, object):
+    """
+    Export a BSpy object or list into an IGES file.
+
+    Parameters
+    ----------
+    fileName : `str`
+        The path to the IGES file, including extension.
+    
+    object : `BSpy.Solid`, `BSpy.Boundary`, or `BSpy.Manifold` (or `list` of these)
+        The object to export, or a list of objects. A TopoDS_Shape will also be accepted.
+    """
     writer = IGESControl_Writer()
 
     if isinstance(object, (TopoDS_Shape, Solid, Boundary, Manifold)):
@@ -37,6 +48,17 @@ def export_iges(fileName, object):
         raise AssertionError("Write failed")
 
 def export_step(fileName, object):
+    """
+    Export a BSpy object or list into a STEP file.
+
+    Parameters
+    ----------
+    fileName : `str`
+        The path to the STEP file, including extension.
+    
+    object : `BSpy.Solid`, `BSpy.Boundary`, or `BSpy.Manifold` (or `list` of these)
+        The object to export, or a list of objects. A TopoDS_Shape will also be accepted.
+    """
     writer = STEPControl_Writer()
     Interface_Static.SetCVal("write.step.schema", "AP203")
 
@@ -110,6 +132,26 @@ def export_step(fileName, object):
         raise AssertionError("Write failed")
 
 def export_stl(fileName, object, mode="ascii", linear_deflection = 0.9, angular_deflection = 0.5):
+    """
+    Export a BSpy object into an STL file.
+
+    Parameters
+    ----------
+    fileName : `str`
+        The path to the STL file, including extension.
+    
+    object : `BSpy.Solid` or `BSpy.Manifold`
+        The single solid or manifold to export. A TopoDS_Shape will also be accepted.
+    
+    mode : `str`, optional
+        Specifies the export mode: "ascii" or "binary". The default is "ascii".
+    
+    linear_deflection : `float`, optional
+        Allowed linear deflection. The lower the value, the more accurate the mesh. Default is 0.9.
+    
+    angular_deflection : `float`, optional
+        Allowed angular deflection. The lower the value, the more accurate the mesh. Default is 0.5.
+    """
     if isinstance(object, Manifold):
         surface, flipNormal, transform = convert.convert_manifold_to_surface(object)
         shape = convert.convert_surface_to_face(surface, flipNormal)

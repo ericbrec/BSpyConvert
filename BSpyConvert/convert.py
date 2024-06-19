@@ -303,7 +303,7 @@ def convert_boundary_to_faces(boundary):
     Returns
     -------
     faces : `list` of `OCC.Core.TopoDS.TopoDS_Face`
-        The list of OpenCascade faces that represent the Boundary.
+        The list of OpenCascade faces that represent the Boundary. (An OCC face must have a connected domain.)
 
     See Also
     --------
@@ -410,7 +410,7 @@ def convert_shape_to_solids(shape):
     Returns
     -------
     solids : `list` of `BSpy.Solid`
-        The list of solids.
+        The list of BSpy solids.
     """
     # Convert all shape geometry to nurbs.
     nurbs_shape = BRepBuilderAPI_NurbsConvert(shape, True).Shape()
