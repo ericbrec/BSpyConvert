@@ -280,7 +280,7 @@ def convert_solid_to_shape(solid):
     builder.Perform()
     return builder.SewedShape()
 
-def flip_normal(parentShape, childShape):
+def _flip_normal(parentShape, childShape):
     parentOrientation = parentShape.Orientation()
     if parentOrientation == TopAbs_EXTERNAL:
         parentOrientation = TopAbs_FORWARD
@@ -368,7 +368,7 @@ def convert_shape_to_solid(shape):
                 spline = Spline(2, 3, order, coefs.shape[1:], knots, coefs)
             
             # Set proper orientation.
-            if flip_normal(shell, face):
+            if _flip_normal(shell, face):
                 spline = spline.flip_normal()
 
             # Create the spline domain boundaries.
@@ -419,7 +419,7 @@ def convert_shape_to_solid(shape):
                     domainSpline = Spline(1, 2, (order,), coefs.shape[1:], (knots,), coefs)
 
                 # Set proper orientation.
-                if flip_normal(face, edge):
+                if _flip_normal(face, edge):
                     domainSpline = domainSpline.flip_normal()
 
                 # Create the domain spline domain boundaries.
@@ -427,7 +427,7 @@ def convert_shape_to_solid(shape):
                 for vertex in explorer.vertices_from_edge(edge):
                     done, parameter = BRep_Tool.Parameter(vertex, edge)
                     if done:
-                        normal = 1.0 if flip_normal(edge, vertex) else -1.0
+                        normal = 1.0 if _flip_normal(edge, vertex) else -1.0
                         domainSplineDomain.add_boundary(Boundary(Hyperplane(normal, parameter, 0.0), Solid(0, True)))
                 domain.add_boundary(Boundary(domainSpline, domainSplineDomain))
 
