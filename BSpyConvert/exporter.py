@@ -6,6 +6,7 @@ from OCC.Core.Interface import Interface_HArray1OfHAsciiString
 from OCC.Core.APIHeaderSection import APIHeaderSection_MakeHeader
 from OCC.Core.TCollection import TCollection_HAsciiString
 from OCC.Core.TopoDS import TopoDS_Shape
+from OCC.Extend.DataExchange import write_stl_file
 from bspy import Solid, Boundary, Manifold
 import BSpyConvert.convert as convert
 
@@ -29,6 +30,8 @@ def export_iges(fileName, object):
             writer.AddShape(shape)
         elif isinstance(object, TopoDS_Shape):
             writer.AddShape(object)
+        else:
+            raise ValueError("Invalid object type")
     
     if not writer.Write(fileName):
         raise AssertionError("Write failed")
@@ -66,6 +69,8 @@ def export_step(fileName, object):
         elif isinstance(object, TopoDS_Shape):
             Interface_Static.SetCVal("write.step.product.name", f"Shape {objectCount}")
             writer.Transfer(object, STEPControl_AsIs)
+        else:
+            raise ValueError("Invalid object type")
         objectCount += 1
 
     # Create STEP header.
@@ -103,3 +108,16 @@ def export_step(fileName, object):
 
     if status != IFSelect_RetDone:
         raise AssertionError("Write failed")
+
+def export_stl(fileName, object, mode="ascii", linear_deflection = 0.9, angular_deflection = 0.5):
+    if isinstance(object, Manifold):
+        surface, flipNormal, transform = convert.convert_manifold_to_surface(object)
+        shape = convert.convert_surface_to_face(surface, flipNormal)
+    elif isinstance(object, Solid):
+        shape = convert.convert_solid_to_shape(object)
+    elif isinstance(object, TopoDS_Shape):
+        shape = object
+    else:
+        raise ValueError("Invalid object type")
+
+    write_stl_file(shape, fileName, mode, linear_deflection, angular_deflection)
