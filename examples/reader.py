@@ -1,5 +1,5 @@
 from bspy import Viewer
-from BSpyConvert.step import import_step
+from BSpyConvert.importer import import_step
 
 if __name__ == "__main__":
     viewer = Viewer()

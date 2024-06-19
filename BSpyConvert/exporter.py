@@ -1,6 +1,6 @@
-from OCC.Core.STEPControl import STEPControl_Reader, STEPControl_Writer, STEPControl_AsIs
-from OCC.Core.Interface import Interface_Static
+from OCC.Core.STEPControl import STEPControl_Writer, STEPControl_AsIs
 from OCC.Core.IFSelect import IFSelect_RetDone
+from OCC.Core.Interface import Interface_Static
 from OCC.Core.Interface import Interface_HArray1OfHAsciiString
 from OCC.Core.APIHeaderSection import APIHeaderSection_MakeHeader
 from OCC.Core.TCollection import TCollection_HAsciiString
@@ -79,19 +79,3 @@ def export_step(fileName, object):
 
     if status != IFSelect_RetDone:
         raise AssertionError("Write failed")
-
-def import_step(fileName):
-    step_reader = STEPControl_Reader()
-    status = step_reader.ReadFile(fileName)
-    if status != IFSelect_RetDone:
-        raise ValueError("Can't read file.")
-    if not step_reader.TransferRoots():
-        raise ValueError("Transfer failed.")
-
-    solids = []
-    for i in range(step_reader.NbShapes()):
-        shape = step_reader.Shape(i + 1)
-        if not shape.IsNull():
-            solids.append(convert.convert_shape_to_solid(shape))
-    
-    return solids
