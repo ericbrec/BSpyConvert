@@ -1,3 +1,4 @@
+from OCC.Core.IGESControl import IGESControl_Writer
 from OCC.Core.STEPControl import STEPControl_Writer, STEPControl_AsIs
 from OCC.Core.IFSelect import IFSelect_RetDone
 from OCC.Core.Interface import Interface_Static
@@ -8,9 +9,32 @@ from OCC.Core.TopoDS import TopoDS_Shape
 from bspy import Solid, Boundary, Manifold
 import BSpyConvert.convert as convert
 
+def export_iges(fileName, object):
+    writer = IGESControl_Writer()
+
+    if isinstance(object, (TopoDS_Shape, Solid, Boundary, Manifold)):
+        objects = [object]
+    else:
+        objects = object
+
+    for object in objects:
+        if isinstance(object, Manifold):
+            surface, flipNormal, transform = convert.convert_manifold_to_surface(object)
+            writer.AddGeom(surface)
+        elif isinstance(object, Boundary):
+            for face in convert.convert_boundary_to_faces(object):
+                writer.AddShape(face)
+        elif isinstance(object, Solid):
+            shape = convert.convert_solid_to_shape(object)
+            writer.AddShape(shape)
+        elif isinstance(object, TopoDS_Shape):
+            writer.AddShape(object)
+    
+    if not writer.Write(fileName):
+        raise AssertionError("Write failed")
+
 def export_step(fileName, object):
-    # Initialize the STEP writer.
-    step_writer = STEPControl_Writer()
+    writer = STEPControl_Writer()
     Interface_Static.SetCVal("write.step.schema", "AP203")
 
     if isinstance(object, (TopoDS_Shape, Solid, Boundary, Manifold)):
@@ -27,25 +51,25 @@ def export_step(fileName, object):
             Interface_Static.SetCVal("write.step.product.name", name)
             surface, flipNormal, transform = convert.convert_manifold_to_surface(object)
             face = convert.convert_surface_to_face(surface, flipNormal)
-            step_writer.Transfer(face, STEPControl_AsIs)
+            writer.Transfer(face, STEPControl_AsIs)
         elif isinstance(object, Boundary):
             name = f"Boundary {objectCount}"
             if hasattr(object.manifold, "metadata"):
                 name = object.manifold.metadata.get("Name", name)
             Interface_Static.SetCVal("write.step.product.name", name)
             for face in convert.convert_boundary_to_faces(object):
-                step_writer.Transfer(face, STEPControl_AsIs)
+                writer.Transfer(face, STEPControl_AsIs)
         elif isinstance(object, Solid):
             shape = convert.convert_solid_to_shape(object)
             Interface_Static.SetCVal("write.step.product.name", f"Solid {objectCount}")
-            step_writer.Transfer(shape, STEPControl_AsIs)
+            writer.Transfer(shape, STEPControl_AsIs)
         elif isinstance(object, TopoDS_Shape):
             Interface_Static.SetCVal("write.step.product.name", f"Shape {objectCount}")
-            step_writer.Transfer(object, STEPControl_AsIs)
+            writer.Transfer(object, STEPControl_AsIs)
         objectCount += 1
 
     # Create STEP header.
-    model = step_writer.Model()
+    model = writer.Model()
     model.ClearHeader()
 
     header = APIHeaderSection_MakeHeader()
@@ -75,7 +99,7 @@ def export_step(fileName, object):
     model.AddHeaderEntity(header.FsValue())
     model.AddHeaderEntity(header.FdValue())
 
-    status = step_writer.Write(fileName)
+    status = writer.Write(fileName)
 
     if status != IFSelect_RetDone:
         raise AssertionError("Write failed")
