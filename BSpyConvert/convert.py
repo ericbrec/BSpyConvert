@@ -5,14 +5,14 @@ from OCC.Core.BRepClass import BRepClass_FaceClassifier
 from OCC.Core.ShapeExtend import ShapeExtend_WireData
 from OCC.Core.ShapeFix import ShapeFix_Face, ShapeFix_Wire
 from OCC.Core.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_Curve2d
-from OCC.Core.TopAbs import TopAbs_FORWARD, TopAbs_IN
+from OCC.Core.TopAbs import TopAbs_FORWARD, TopAbs_REVERSED, TopAbs_INTERNAL, TopAbs_EXTERNAL, TopAbs_IN
 from OCC.Core.BRep import BRep_Tool
 from OCC.Core.Geom import Geom_BSplineSurface, Geom_Plane
 from OCC.Core.Geom2d import Geom2d_BSplineCurve, Geom2d_Line
 from OCC.Core.gp import gp_Pnt, gp_Dir, gp_Ax3, gp_Pnt2d, gp_Dir2d
 from OCC.Core.TColgp import TColgp_Array2OfPnt, TColgp_Array1OfPnt2d
 from OCC.Core.TColStd import TColStd_Array1OfReal, TColStd_Array1OfInteger
-from OCC.Extend.TopologyUtils import TopologyExplorer, WireExplorer
+from OCC.Extend.TopologyUtils import TopologyExplorer
 from OCC.Core.GeomAbs import GeomAbs_BSplineSurface, GeomAbs_BSplineCurve
 from bspy import Manifold, Spline, Hyperplane, Boundary, Solid
 
@@ -280,6 +280,21 @@ def convert_solid_to_shape(solid):
     builder.Perform()
     return builder.SewedShape()
 
+def flip_normal(parentShape, childShape):
+    parentOrientation = parentShape.Orientation()
+    if parentOrientation == TopAbs_EXTERNAL:
+        parentOrientation = TopAbs_FORWARD
+    elif parentOrientation == TopAbs_INTERNAL:
+        parentOrientation = TopAbs_REVERSED
+
+    childOrientation = childShape.Orientation()
+    if childOrientation == TopAbs_EXTERNAL:
+        childOrientation = TopAbs_FORWARD
+    elif childOrientation == TopAbs_INTERNAL:
+        childOrientation = TopAbs_REVERSED
+    
+    return parentOrientation != childOrientation
+
 def convert_shape_to_solid(shape):
     # Create empty solid.
     solid = Solid(3, False)
@@ -293,8 +308,6 @@ def convert_shape_to_solid(shape):
 
     # Convert each face to a Boundary with a Spline manifold.
     for shell in explorer.shells():
-        shellFlipped = shell.Orientation() != TopAbs_FORWARD
-        
         for face in explorer.faces_from_solids(shell):
             surface = BRepAdaptor_Surface(face, True)
             if not surface.GetType() == GeomAbs_BSplineSurface:
@@ -355,9 +368,7 @@ def convert_shape_to_solid(shape):
                 spline = Spline(2, 3, order, coefs.shape[1:], knots, coefs)
             
             # Set proper orientation.
-            faceFlipped = face.Orientation() != TopAbs_FORWARD
-            faceFlipped = not faceFlipped if shellFlipped else faceFlipped
-            if faceFlipped:
+            if flip_normal(shell, face):
                 spline = spline.flip_normal()
 
             # Create the spline domain boundaries.
@@ -408,9 +419,7 @@ def convert_shape_to_solid(shape):
                     domainSpline = Spline(1, 2, (order,), coefs.shape[1:], (knots,), coefs)
 
                 # Set proper orientation.
-                edgeFlipped = edge.Orientation() != TopAbs_FORWARD
-                edgeFlipped = not edgeFlipped if faceFlipped else edgeFlipped
-                if edgeFlipped:
+                if flip_normal(face, edge):
                     domainSpline = domainSpline.flip_normal()
 
                 # Create the domain spline domain boundaries.
@@ -418,9 +427,7 @@ def convert_shape_to_solid(shape):
                 for vertex in explorer.vertices_from_edge(edge):
                     done, parameter = BRep_Tool.Parameter(vertex, edge)
                     if done:
-                        vertexFlipped = vertex.Orientation() != TopAbs_FORWARD
-                        vertexFlipped = not vertexFlipped if edgeFlipped else vertexFlipped
-                        normal = 1.0 if vertexFlipped else -1.0
+                        normal = 1.0 if flip_normal(edge, vertex) else -1.0
                         domainSplineDomain.add_boundary(Boundary(Hyperplane(normal, parameter, 0.0), Solid(0, True)))
                 domain.add_boundary(Boundary(domainSpline, domainSplineDomain))
 
