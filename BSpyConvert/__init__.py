@@ -1,9 +1,9 @@
 """
-BSpyConvert is a python library for importing and exporting BSpy objects to common CAD formats.
+BSpyConvert is a library for converting BSpy splines and solid models to and from OpenCascade (OCCT) equivalents and a variety of geometry and CAD file formats.
 
 Available subpackages
 ---------------------
-`bspy.convert` : Functions to convert BSpy objects to OpenCascade (OCC) objects (and vice-versa).
+`bspy.convert` : Functions to convert BSpy objects to OpenCascade (OCCT) objects (and vice-versa).
 
 `bspy.importer` : Functions to import BSpy objects from IGES and STEP files.
 
