@@ -170,16 +170,16 @@ def convert_domain_to_wires(surface, domain):
             self.connection = None
     endpoints = []
     for curve in domain.boundaries:
-        curve.domain.boundaries.sort(key=lambda boundary: (boundary.manifold.evaluate(0.0), -boundary.manifold.normal(0.0)))
+        curve.trim.boundaries.sort(key=lambda boundary: (boundary.manifold.evaluate(0.0), -boundary.manifold.normal(0.0)))
         leftB = 0
         rightB = 0
-        boundaryCount = len(curve.domain.boundaries)
+        boundaryCount = len(curve.trim.boundaries)
         while leftB < boundaryCount:
-            if curve.domain.boundaries[leftB].manifold.normal(0.0) < 0.0:
-                leftPoint = curve.domain.boundaries[leftB].manifold.evaluate(0.0)[0]
+            if curve.trim.boundaries[leftB].manifold.normal(0.0) < 0.0:
+                leftPoint = curve.trim.boundaries[leftB].manifold.evaluate(0.0)[0]
                 while rightB < boundaryCount:
-                    rightPoint = curve.domain.boundaries[rightB].manifold.evaluate(0.0)[0]
-                    if leftPoint - Manifold.minSeparation < rightPoint and curve.domain.boundaries[rightB].manifold.normal(0.0) > 0.0:
+                    rightPoint = curve.trim.boundaries[rightB].manifold.evaluate(0.0)[0]
+                    if leftPoint - Manifold.minSeparation < rightPoint and curve.trim.boundaries[rightB].manifold.normal(0.0) > 0.0:
                         t = curve.manifold.tangent_space(leftPoint)[:,0]
                         n = curve.manifold.normal(leftPoint)
                         clockwise = t[0] * n[1] - t[1] * n[0] > 0.0
@@ -311,7 +311,7 @@ def convert_boundary_to_faces(boundary):
     `convert_domain_to_wires` : Convert a BSpy boundary domain to a list of OCC TopoDS_Wire.
     """
     surface, flipNormal, transform = convert_manifold_to_surface(boundary.manifold)
-    domain = boundary.domain if transform is None else boundary.domain.transform(transform)
+    domain = boundary.trim if transform is None else boundary.trim.transform(transform)
     wires = convert_domain_to_wires(surface, domain)
 
     # Build faces without holes.
@@ -382,7 +382,7 @@ def convert_solid_to_shape(solid):
     builder.Perform()
     return builder.SewedShape()
 
-def _flip_normal(parentShape, childShape):
+def _negate_normal(parentShape, childShape):
     """Determine whether or not a child's normal should be flipped based on the parent's and child's orientation."""
     parentOrientation = parentShape.Orientation()
     if parentOrientation == TopAbs_EXTERNAL:
@@ -491,8 +491,8 @@ def convert_shape_to_solids(shape):
                         spline = Spline(2, 3, order, coefs.shape[1:], knots, coefs)
                     
                     # Set proper orientation.
-                    if _flip_normal(shell, face):
-                        spline = spline.flip_normal()
+                    if _negate_normal(shell, face):
+                        spline = spline.negate_normal()
 
                     # Create the spline domain boundaries.
                     domain = Solid(2, False)
@@ -542,15 +542,15 @@ def convert_shape_to_solids(shape):
                             domainSpline = Spline(1, 2, (order,), coefs.shape[1:], (knots,), coefs)
 
                         # Set proper orientation.
-                        if _flip_normal(face, edge):
-                            domainSpline = domainSpline.flip_normal()
+                        if _negate_normal(face, edge):
+                            domainSpline = domainSpline.negate_normal()
 
                         # Create the domain spline domain boundaries.
                         domainSplineDomain = Solid(1, False)
                         for vertex in explorer.vertices_from_edge(edge):
                             done, parameter = BRep_Tool.Parameter(vertex, edge)
                             if done:
-                                normal = 1.0 if _flip_normal(edge, vertex) else -1.0
+                                normal = 1.0 if _negate_normal(edge, vertex) else -1.0
                                 domainSplineDomain.add_boundary(Boundary(Hyperplane(normal, parameter, 0.0), Solid(0, True)))
                         domain.add_boundary(Boundary(domainSpline, domainSplineDomain))
 

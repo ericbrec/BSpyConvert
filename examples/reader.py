@@ -8,7 +8,7 @@ if __name__ == "__main__":
     np.set_printoptions(suppress=True)
 
     logging.info("Import file")
-    solids = import_step(r"C:\Users\ericb\Downloads\radiator impeller.STEP")
+    solids = import_step(r"C:\Users\ericb\OneDrive\Documents\Publications\B-rep booleans\radiator impeller.STEP")
     #solids = import_step(r"C:\Users\ericb\OneDrive\Documents\Publications\B-rep booleans\Island.stp")
     #solids = import_step(r"c:\users\ericb\onedrive\desktop\Solid.stp")
     #solids = import_iges(r"c:\users\ericb\onedrive\desktop\Solid.igs")
